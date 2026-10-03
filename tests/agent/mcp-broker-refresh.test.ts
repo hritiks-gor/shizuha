@@ -37,7 +37,7 @@ function makeMockClient() {
 // Hoist mocks before any module imports.
 
 vi.mock('@modelcontextprotocol/sdk/client/sse.js', () => ({
-  SSEClientTransport: vi.fn((_url: URL, _opts: unknown) => {
+  SSEClientTransport: vi.fn(function (_url: URL, _opts: unknown) {
     const t = new MockSSETransport();
     transports.push(t);
     return t;
@@ -45,19 +45,19 @@ vi.mock('@modelcontextprotocol/sdk/client/sse.js', () => ({
 }));
 
 vi.mock('@modelcontextprotocol/sdk/client/stdio.js', () => ({
-  StdioClientTransport: vi.fn(() => ({ start: vi.fn(), close: vi.fn() })),
+  StdioClientTransport: vi.fn(function () { return ({ start: vi.fn(), close: vi.fn() }); }),
 }));
 
 vi.mock('@modelcontextprotocol/sdk/client/streamableHttp.js', () => ({
-  StreamableHTTPClientTransport: vi.fn(() => ({ start: vi.fn(), close: vi.fn() })),
+  StreamableHTTPClientTransport: vi.fn(function () { return ({ start: vi.fn(), close: vi.fn() }); }),
 }));
 
 vi.mock('@modelcontextprotocol/sdk/client/websocket.js', () => ({
-  WebSocketClientTransport: vi.fn(() => ({ start: vi.fn(), close: vi.fn() })),
+  WebSocketClientTransport: vi.fn(function () { return ({ start: vi.fn(), close: vi.fn() }); }),
 }));
 
 vi.mock('@modelcontextprotocol/sdk/client/index.js', () => ({
-  Client: vi.fn(() => {
+  Client: vi.fn(function () {
     const c = makeMockClient();
     clients.push(c);
     return c;

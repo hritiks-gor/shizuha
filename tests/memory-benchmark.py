@@ -10,7 +10,7 @@ Agents:
   - Claw   (openclaw_bridge)
 """
 
-import json, time, sys, threading
+import os, json, time, sys, threading
 from websocket import create_connection, WebSocketTimeoutException  # pip install websocket-client
 
 DASHBOARD_URL = "ws://localhost:8015"
@@ -44,7 +44,10 @@ QUERIES = [
 def login_dashboard():
     """Login to dashboard and get session cookie."""
     import urllib.request
-    data = json.dumps({"username": "shizuha", "password": "shizuha"}).encode()
+    password = os.environ.get("SHIZUHA_DASHBOARD_E2E_PASSWORD", "")
+    if not password.strip():
+        raise RuntimeError("Set SHIZUHA_DASHBOARD_E2E_PASSWORD for the explicit test dashboard.")
+    data = json.dumps({"username": os.environ.get("DASHBOARD_USER", "shizuha"), "password": password}).encode()
     req = urllib.request.Request(
         "http://localhost:8015/v1/dashboard/login",
         data=data,

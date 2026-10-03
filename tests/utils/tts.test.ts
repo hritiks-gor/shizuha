@@ -3,13 +3,13 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 // Mock the openai module before importing the module under test
 const mockCreate = vi.fn();
 vi.mock('openai', () => ({
-  default: vi.fn().mockImplementation(() => ({
+  default: vi.fn().mockImplementation(function () { return ({
     audio: {
       speech: {
         create: mockCreate,
       },
     },
-  })),
+  }); }),
 }));
 
 // Mock the logger to suppress output in tests

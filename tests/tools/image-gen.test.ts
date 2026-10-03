@@ -4,11 +4,11 @@ import type { ToolContext } from '../../src/tools/types.js';
 // Mock the openai module
 const mockGenerate = vi.fn();
 vi.mock('openai', () => ({
-  default: vi.fn().mockImplementation(() => ({
+  default: vi.fn().mockImplementation(function () { return ({
     images: {
       generate: mockGenerate,
     },
-  })),
+  }); }),
 }));
 
 const { imageGenTool } = await import('../../src/tools/builtin/image-gen.js');

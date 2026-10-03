@@ -10,7 +10,7 @@ Methodology:
 This ensures we're testing real persistent recall, not LLM context.
 """
 
-import json, time, sys, subprocess, urllib.request
+import os, json, time, sys, subprocess, urllib.request
 from websocket import create_connection, WebSocketTimeoutException
 
 DASHBOARD = "http://localhost:8015"
@@ -44,7 +44,10 @@ QUERIES = [
 
 def login():
     global SESSION_COOKIE
-    data = json.dumps({"username": "shizuha", "password": "shizuha"}).encode()
+    password = os.environ.get("SHIZUHA_DASHBOARD_E2E_PASSWORD", "")
+    if not password.strip():
+        raise RuntimeError("Set SHIZUHA_DASHBOARD_E2E_PASSWORD for the explicit test dashboard.")
+    data = json.dumps({"username": os.environ.get("DASHBOARD_USER", "shizuha"), "password": password}).encode()
     req = urllib.request.Request(f"{DASHBOARD}/v1/dashboard/login", data=data,
                                  headers={"Content-Type": "application/json"})
     resp = urllib.request.urlopen(req)

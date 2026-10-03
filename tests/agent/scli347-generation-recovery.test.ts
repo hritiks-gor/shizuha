@@ -324,7 +324,9 @@ describe('SCLI-347 fenced-generation expensive-turn recovery', () => {
       riskLevel: 'low',
       async execute() {
         executions += 1;
-        return { toolUseId: 'tc-non-idempotent', content: `write-${executions}` };
+        // Pin fixture timing: real wall-clock execution can take 0ms or 1ms.
+        // Recovery must preserve the tool's reported audit duration.
+        return { toolUseId: 'tc-non-idempotent', content: `write-${executions}`, durationMs: 7 };
       },
     });
     agent.toolRegistry = registry;
@@ -361,7 +363,7 @@ describe('SCLI-347 fenced-generation expensive-turn recovery', () => {
       'jun-s347',
       'non_idempotent_write',
       'write-1',
-      0,
+      7,
     );
     // Tool turns must not open recovery by themselves.
     expect(store.loadExpensiveTurnRecovery(sessionId)).toBeNull();
