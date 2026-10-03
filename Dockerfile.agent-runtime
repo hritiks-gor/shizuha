@@ -67,7 +67,9 @@ RUN { [ -n "${APT_HTTP_PROXY}" ] && printf 'Acquire::http::Proxy "%s";\n' "${APT
       printf 'Acquire::Retries "3";\n'; } > /etc/apt/apt.conf.d/00shizuha-apt-cache
 
 # ── Layer 1: System packages + Node.js 24 + gh ──
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# A missing third-party index must not silently select Ubuntu's older nodejs
+# package, which omits npm. Qualify the requested runtime before caching it.
+RUN apt-get update --error-on=any && apt-get install -y --no-install-recommends \
     ca-certificates curl gnupg git openssh-client \
     python3 python3-pip python3-venv python3-dev \
     build-essential pkg-config \
@@ -83,7 +85,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   && echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_${NODE_MAJOR}.x nodistro main" > /etc/apt/sources.list.d/nodesource.list \
   && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | dd of=/etc/apt/keyrings/gh.gpg \
   && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/gh.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list \
-  && apt-get update && apt-get install -y --no-install-recommends nodejs gh \
+  && apt-get update --error-on=any && apt-get install -y --no-install-recommends "nodejs=${NODE_MAJOR}.*" gh \
+  && node -e 'if (process.versions.node.split(".")[0] !== process.env.NODE_MAJOR) process.exit(1)' \
+  && npm --version \
   && rm -rf /var/lib/apt/lists/*
 
 # PLAT-3412: privileged k3s-native agents must have kubectl in the immutable

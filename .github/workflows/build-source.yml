@@ -45,6 +45,7 @@ jobs:
       - name: Install, build, and load the native addon
         env:
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+          EXPECT_TARGET: ${{ matrix.target }}
         run: |
           set -euo pipefail
           case "$(uname -s)-$(uname -m)" in
@@ -54,7 +55,7 @@ jobs:
             Darwin-x86_64) expect=darwin-x64 ;;
             *) echo "unsupported runner $(uname -s)-$(uname -m)" >&2; exit 1 ;;
           esac
-          test "$expect" = "${{ matrix.target }}"
+          test "$expect" = "$EXPECT_TARGET"
           npm ci --no-audit --no-fund
           npm run build:node
           node -e 'const db=require("better-sqlite3")(":memory:"); if (db.prepare("select 1 as ok").get().ok!==1) process.exit(1); console.log("sqlite_ok", process.platform, process.arch);'
