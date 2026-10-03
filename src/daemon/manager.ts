@@ -20,6 +20,7 @@
 
 import { spawn, execFile, execSync, type ChildProcess } from 'node:child_process';
 import http from 'node:http';
+import { installPublicSkills, syncSkillsOnce } from './skill-sync.js';
 import {
   computeAgentMcpConfigHash,
   explainK8sUnsupportedRuntime,
@@ -6290,6 +6291,16 @@ function syncBundledSkills(): void {
   }
 
   const shizuhaDistDir = path.dirname(process.argv[1] ?? __filename);
+  const publicBundle = path.join(shizuhaDistDir, 'skills', 'public');
+  if (fs.existsSync(publicBundle)) {
+    try {
+      const result = installPublicSkills(publicBundle, userSkillsDir,
+        path.join(home, '.shizuha', 'public-skills-state.json'));
+      console.log(`[daemon] public bundled skills: ${result.installed} installed, ${result.preserved} preserved`);
+    } catch (err) {
+      console.warn(`[daemon] public bundled skills not installed: ${(err as Error).message}`);
+    }
+  }
   const bundledDir = path.join(shizuhaDistDir, 'skills', 'integrations');
 
   if (!fs.existsSync(bundledDir)) {
@@ -6374,34 +6385,17 @@ const SKILL_SYNC_INTERVAL_MS = 5 * 60 * 1000;
  */
 function startSkillSyncLoop(): void {
   const home = process.env['HOME'] ?? '/root';
-  const skillsDir = path.join(home, '.shizuha', 'skills');
 
   const tick = (): void => {
     try {
       if (!isAutoSkillSyncEnabled()) return;
-      if (!fs.existsSync(path.join(skillsDir, '.git'))) return; // not a git checkout
-      const git = (args: string): string =>
-        execSync(`git -C "${skillsDir}" ${args}`, { encoding: 'utf-8', timeout: 30_000 }).trim();
-
-      // Dirty-guard: never pull over local changes.
-      if (git('status --porcelain')) {
-        console.warn('[daemon] skill-sync: working tree dirty — skipping pull');
-        return;
-      }
-      const branch = git('rev-parse --abbrev-ref HEAD') || 'master';
-      const localSha = git('rev-parse HEAD');
-      // Cheap delta check first — one tiny network call, no fetch unless changed.
-      const remoteSha = git(`ls-remote origin ${branch}`).split(/\s+/)[0];
-      if (!remoteSha || remoteSha === localSha) return; // up to date
-
-      git('fetch --quiet origin');
-      git(`merge --ff-only origin/${branch}`); // throws if not fast-forwardable → caught below
-      const after = git('rev-parse HEAD');
-      if (after !== localSha) {
-        const changed = git(`diff --name-only ${localSha} ${after}`).split('\n').filter(Boolean);
-        const skills = [...new Set(changed.map((f) => f.split('/')[0]))];
-        console.log(`[daemon] skill-sync: ${branch} ${localSha.slice(0, 7)}→${after.slice(0, 7)} — updated: ${skills.join(', ')}`);
-      }
+      const result = syncSkillsOnce({
+        home,
+        repository: process.env['SHIZUHA_SKILLS_SYNC_REPO'],
+        subdirectory: process.env['SHIZUHA_SKILLS_SYNC_SUBDIR'],
+        branch: process.env['SHIZUHA_SKILLS_SYNC_BRANCH'],
+      });
+      console.log(`[daemon] skill-sync: ${result}`);
     } catch (err) {
       console.warn(`[daemon] skill-sync error: ${(err as Error).message}`);
     }

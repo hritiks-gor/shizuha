@@ -162,6 +162,9 @@ tmuxE2eDescribe('TUI tmux renderer e2e tests', () => {
     try {
       await waitForPattern(target, /Type a message|❯/, 15_000);
       sendLiteral(target, '/status');
+      // Observe the typed command before submitting: otherwise tmux can deliver
+      // text and Enter in one paste-like chunk and leave the command unsubmitted.
+      await waitForPattern(target, /❯ \/status/, 10_000);
       sendKeys(target, 'Enter');
       await waitForPattern(target, /Session:/, 15_000);
 
