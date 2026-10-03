@@ -23,6 +23,8 @@ jobs:
           # in tests/ci/_mini_yaml.py, which raises on anything it cannot
           # parse — the guard still fails closed, never silently skips.
           python3 -m unittest -v tests.ci.test_plat4734_no_context_injection
+      - name: Runtime Node installation fails closed
+        run: python3 -m unittest -v tests.ci.test_runtime_node_install
       - name: Agent runtime Python lock parity
         run: python3 -m unittest -v tests.ci.test_agent_runtime_python_lock
       - name: Agent runtime OCI overlay contract
