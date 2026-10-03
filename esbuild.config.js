@@ -1,3 +1,4 @@
+import { materialize } from './scripts/materialize-public-skills.mjs';
 import { build } from 'esbuild';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -138,3 +139,7 @@ for (const entry of fs.readdirSync(skillsSrc, { withFileTypes: true })) {
   }
 }
 console.log(`Built dist/shizuha.js + ${skillCount} integration skills`);
+
+// Curated portable catalog is also available offline in CLI installations.
+fs.rmSync(path.join('dist', 'skills', 'public'), { recursive: true, force: true });
+materialize(path.resolve('skills-public'), path.resolve('dist', 'skills', 'public'));

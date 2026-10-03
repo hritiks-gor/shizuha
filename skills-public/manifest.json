@@ -1,0 +1,55 @@
+{
+  "schema": "shizuha.public-skills.v1",
+  "license": "AGPL-3.0-or-later",
+  "source": "https://github.com/shizuha-labs/shizuha/tree/master/skills-public",
+  "skills": [
+    {
+      "name": "skill-loader",
+      "sha256": "eea1c3f41f1d6531ad952ca1c723bc2e949cd726dd6b47885a27f906898759da"
+    },
+    {
+      "name": "engineering-core",
+      "sha256": "05318be7001a4c6d546e9910e94719752154cdd8766724a9ecc8a15bd6a5e184"
+    },
+    {
+      "name": "verify-before-push",
+      "sha256": "645bcea4965c1c3049d9255b62175de9f789aead04edc8c2ca844d3828302280"
+    },
+    {
+      "name": "skill-builder",
+      "sha256": "b63c7ae46fe8f61a44b00c203c813dd52aaf0a86604c0b15f1dda195fd54a6a8"
+    },
+    {
+      "name": "web-search",
+      "sha256": "c13d78bf84148d17cc3c3ae69ec2669fbfd33659dce0c022d0fc8f51d7aec91d"
+    },
+    {
+      "name": "e2e-testing",
+      "sha256": "72fb3dee755fc4ad83239a1f4b0cee4fe589c3df9e20034025971667e3f40d00"
+    },
+    {
+      "name": "async-frontends",
+      "sha256": "5ac8aa49db97fd72ff9aa1debdb7f76ce61aa84dee263a3f24d4465e5d8a3a4e"
+    },
+    {
+      "name": "experimentation",
+      "sha256": "992ca783b75b4a151c21adca376b46c51ac0311217ac4e78e894d82d6de24192"
+    },
+    {
+      "name": "product-discovery",
+      "sha256": "11f713e95c935ccf8d4bfae3ed48a9f6f00b9f7da8ece3a3b19b667b7b9e1f08"
+    },
+    {
+      "name": "user-research",
+      "sha256": "4241834901ccee26ccb4b5670377461340558bd13c75865687b1be8b6cbcd7ec"
+    },
+    {
+      "name": "product-analytics",
+      "sha256": "d50e73900ed10895ab83ce057b8e8a2e72a4fec2fd56133f0d34d15e67769e19"
+    },
+    {
+      "name": "architecture-decisions",
+      "sha256": "9c3fbaa49248be2c38e225a6c6bc1d1d16adaecc2ee1969ae52eecd0e97f87d2"
+    }
+  ]
+}

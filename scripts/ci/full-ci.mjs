@@ -76,6 +76,7 @@ for (const q of quarantined) vitestArgs.push('--exclude', q.file);
 
 const commands = [
   [process.execPath, ['scripts/ci/check-portable-source.mjs']],
+  [process.execPath, ['scripts/materialize-public-skills.mjs', '--check']],
   [npmCmd, ['run', 'build:check']],
   [npmCmd, ['run', 'build:node']],
   // The FULL unit/integration suite (the e2e CLI tests need the node bundle

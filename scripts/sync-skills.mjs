@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { materialize } from './materialize-public-skills.mjs';
 /**
  * sync-skills.mjs — Copy integration skills from src/ to dist/ without a full JS rebuild.
  *
@@ -57,3 +58,6 @@ console.log(`sync-skills: ${copied} updated, ${upToDate} already up-to-date (dis
 if (copied > 0) {
   console.log(`  → Run deploy.sh to push changes to the host.`);
 }
+
+fs.rmSync(path.join(root, 'dist', 'skills', 'public'), { recursive: true, force: true });
+materialize(path.join(root, 'skills-public'), path.join(root, 'dist', 'skills', 'public'));

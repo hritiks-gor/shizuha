@@ -103,6 +103,11 @@ jobs:
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm ci --no-audit --no-fund
           npm run build:node
 
+      - name: Materialize reviewed public skills
+        run: |
+          node scripts/materialize-public-skills.mjs --dest .runtime-skills
+          echo "PUBLIC_SKILLS_COUNT=$(node -p "require('./skills-public/manifest.json').skills.length")" >> "$GITHUB_ENV"
+
       - name: Resolve harness versions + render lock (mirror the internal lane)
         env:
           AGY_MANIFEST_URL: https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/linux_amd64.json
@@ -151,8 +156,8 @@ jobs:
             SCLI_VERSION=${{ github.sha }}
             SCLI_SOURCE_SHA=${{ github.sha }}
             SKILLS_SOURCE_SHA=${{ github.sha }}
-            SKILLS_MIN_COUNT=0
-            SKILLS_REQUIRED=
+            SKILLS_MIN_COUNT=${{ env.PUBLIC_SKILLS_COUNT }}
+            SKILLS_REQUIRED=skill-loader engineering-core verify-before-push
             CLAUDE_CODE_VERSION=${{ env.CC_VER }}
             CODEX_VERSION=${{ env.CODEX_VER }}
             ANTIGRAVITY_VERSION=${{ env.AGY_VER }}

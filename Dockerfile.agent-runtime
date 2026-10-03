@@ -289,10 +289,9 @@ ARG SKILLS_SOURCE_SHA=unknown
 COPY .runtime-skills /opt/skills
 # Qualified-skills payload contract. INTERNAL DEFAULTS qualify the fleet
 # toolkit payload (>= 50 skills + the five doctrine anchors). Public/open-source
-# builds pass an empty contract via build-args — the skills payload lives in
-# the private skills repo and is deliberately not published; the CLI's skills
-# sync (staleness-runtime) handles skills at runtime from a user-configured
-# source. One Dockerfile, two contexts, no fork.
+# builds materialize only the reviewed skills-public manifest and pass its
+# nonzero count and public anchors. Private builds retain their full catalog
+# and existing defaults. One Dockerfile, two explicit contexts, no empty gate.
 ARG SKILLS_MIN_COUNT=50
 ARG SKILLS_REQUIRED="skill-loader engineering-core fix-root-cause live-verification heartbeat-protocol"
 RUN skill_count="$(find /opt/skills -mindepth 2 -maxdepth 2 -name SKILL.md | wc -l)" \
