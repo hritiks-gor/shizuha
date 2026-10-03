@@ -43,12 +43,12 @@ vi.mock('../../src/config/loader.js', () => ({
 }));
 
 vi.mock('../../src/provider/registry.js', () => ({
-  ProviderRegistry: vi.fn().mockImplementation(() => ({
+  ProviderRegistry: vi.fn().mockImplementation(function () { return ({
     resolve: () => mockProvider,
     resolveWithModel: (m: string) => ({ provider: mockProvider, resolvedModel: m }),
     resolveAutoModel: () => 'test-model',
     hasCloudProvider: () => true,
-  })),
+  }); }),
   isCortexModelId: () => false,
 }));
 
@@ -58,7 +58,7 @@ vi.mock('../../src/prompt/builder.js', () => ({
 
 vi.mock('../../src/state/store.js', () => {
   return {
-    StateStore: vi.fn().mockImplementation(() => ({
+    StateStore: vi.fn().mockImplementation(function () { return ({
       createSession: (_model: string, _cwd: string) => {
         const id = 'test-session-id';
         const session = { id, model: _model, cwd: _cwd, createdAt: Date.now(), updatedAt: Date.now(), messages: [], totalInputTokens: 0, totalOutputTokens: 0, turnCount: 0 };
@@ -70,16 +70,16 @@ vi.mock('../../src/state/store.js', () => {
       updateTokens: () => {},
       replaceMessages: storeHarness.replaceMessages,
       close: () => {},
-    })),
+    }); }),
   };
 });
 
 vi.mock('../../src/tools/mcp/manager.js', () => ({
-  MCPManager: vi.fn().mockImplementation(() => ({
+  MCPManager: vi.fn().mockImplementation(function () { return ({
     connectAll: vi.fn().mockResolvedValue(undefined),
     disconnectAll: vi.fn().mockResolvedValue(undefined),
     failedServers: [],
-  })),
+  }); }),
 }));
 
 vi.mock('../../src/tools/mcp/bridge.js', () => ({

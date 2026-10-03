@@ -55,7 +55,7 @@ describe('Connect DM client message IDs', () => {
 
     const result = await sendConnectDm({
       conversationId: 'conv-abc',
-      recipientEmail: 'hothritik1@gmail.com',
+      recipientEmail: 'operator@example.org',
       content: 'looking at AT-91 now',
       platformUrl: 'https://connect.example.test',
       token: 'test-token',

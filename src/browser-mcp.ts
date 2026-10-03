@@ -2,7 +2,6 @@ import * as crypto from 'node:crypto';
 import { resolveProxyLauncher, type McpHttpServerEntry, type McpStdioServerEntry } from './platform/mcp-services.js';
 
 const DEFAULT_BROWSER_MCP_URL = 'http://127.0.0.1:18116/mcp';
-const DEFAULT_BROWSER_MCP_SECRET = 'dev_jwt_secret_key_for_local_development_only_change_in_prod';
 
 export const BROWSER_MCP_TOKEN_ENV = 'SHIZUHA_BROWSER_MCP_BEARER';
 
@@ -114,12 +113,16 @@ export function wantsBrowserMcp(
 }
 
 export function browserMcpBearerToken(env: NodeJS.ProcessEnv = process.env): string {
-  const existing = env[BROWSER_MCP_TOKEN_ENV] || env['SHIZUHA_BROWSER_MCP_TOKEN'];
+  // Validate nonblank configuration without changing the configured credential bytes.
+  const configured = (...names: string[]) => names.map(name => env[name])
+    .find((value): value is string => typeof value === 'string' && value.trim().length > 0);
+  const existing = configured(BROWSER_MCP_TOKEN_ENV, 'SHIZUHA_BROWSER_MCP_TOKEN');
   if (existing) return existing;
 
-  const secret = env['SHIZUHA_BROWSER_MCP_JWT_SECRET']
-    || env['JWT_SECRET_KEY']
-    || DEFAULT_BROWSER_MCP_SECRET;
+  const secret = configured('SHIZUHA_BROWSER_MCP_JWT_SECRET', 'JWT_SECRET_KEY');
+  if (!secret) {
+    throw new Error('HTTP browser MCP requires an explicit bearer token or configured signing key');
+  }
 
   return signHs256({
     sub: env['AGENT_USERNAME'] || env['USER'] || 'agent',

@@ -11,11 +11,12 @@ import { getDashboardUrl, guardRemoteDashboardTarget } from './dashboard-target'
 
 const BASE_URL = getDashboardUrl();
 const TIMEOUT = 20_000;
-const USERNAME = 'shizuha';
-const PASSWORD = 'shizuha';
+const USERNAME = process.env['DASHBOARD_USER'] || 'shizuha';
+const PASSWORD = process.env['SHIZUHA_DASHBOARD_E2E_PASSWORD'] || '';
 
 test.beforeEach(() => {
   guardRemoteDashboardTarget(BASE_URL);
+  if (!PASSWORD.trim()) throw new Error('Set SHIZUHA_DASHBOARD_E2E_PASSWORD for the explicit test dashboard.');
 });
 
 // ── WS Interceptor Script (injected BEFORE page loads) ──

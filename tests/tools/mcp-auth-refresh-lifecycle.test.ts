@@ -33,7 +33,7 @@ class MockClient {
 }
 
 vi.mock('@modelcontextprotocol/sdk/client/streamableHttp.js', () => ({
-  StreamableHTTPClientTransport: vi.fn(() => {
+  StreamableHTTPClientTransport: vi.fn(function () {
     const transport = new MockStreamableHttpTransport();
     transports.push(transport);
     return transport;
@@ -41,7 +41,7 @@ vi.mock('@modelcontextprotocol/sdk/client/streamableHttp.js', () => ({
 }));
 
 vi.mock('@modelcontextprotocol/sdk/client/index.js', () => ({
-  Client: vi.fn(() => new MockClient()),
+  Client: vi.fn(function () { return new MockClient(); }),
 }));
 
 vi.mock('@modelcontextprotocol/sdk/client/sse.js', () => ({
