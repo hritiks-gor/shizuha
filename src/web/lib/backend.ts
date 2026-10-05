@@ -15,14 +15,28 @@
 
 const STORAGE_KEY = 'shizuha_backend_url';
 
-function isTauriShell(): boolean {
+export function isTauriShell(): boolean {
   return typeof window !== 'undefined' && Boolean((window as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__);
+}
+
+/**
+ * The desktop daemon listens on [::1]. On a Mac, localhost and 127.0.0.1
+ * can be a different process (VS Code owns 127.0.0.1:8016 on v4). WKWebView
+ * then opens a voice socket that never sends ready, and Live stays on Connecting.
+ */
+export function preferDaemonLoopback(url: string): string {
+  return url.replace(
+    /^(https?|wss?):\/\/(localhost|127\.0\.0\.1)(?=:801[56]\b)/,
+    '$1://[::1]',
+  );
 }
 
 /** Default = whatever origin the dashboard was served from. */
 export function defaultBackendUrl(): string {
   if (typeof window === 'undefined') return '';
-  if (isTauriShell()) return 'http://127.0.0.1:8016';
+  // The webview cannot use http://[::1] (CSP drops that source). The app
+  // opens 127.0.0.1:18016 and bridges it to the ::1 daemon.
+  if (isTauriShell()) return 'http://127.0.0.1:18016';
   return window.location.origin;
 }
 
@@ -31,7 +45,10 @@ export function getBackendUrl(): string {
   if (typeof window === 'undefined') return '';
   try {
     const stored = window.localStorage.getItem(STORAGE_KEY);
-    if (stored && stored.length > 0) return normalize(stored);
+    if (stored && stored.length > 0) {
+      const normalized = normalize(stored);
+      return isTauriShell() ? preferDaemonLoopback(normalized) : normalized;
+    }
   } catch { /* private mode etc. */ }
   return defaultBackendUrl();
 }
@@ -78,6 +95,28 @@ export function isLocalBackend(url: string = getBackendUrl()): boolean {
 export function connectWsUrl(path: '/connect/ws/connect/user/' | '/connect/ws/connect/agent/', token: string, url: string = getBackendUrl()): string {
   const base = normalize(url).replace(/^http/, 'ws');
   return `${base}${path}?token=${encodeURIComponent(token)}`;
+}
+
+/** True when the dashboard is talking to a core on this machine. */
+export function isLoopbackBackendUrl(url: string): boolean {
+  try {
+    const host = new URL(url).hostname.replace(/^\[|\]$/g, '').toLowerCase();
+    return host === 'localhost' || host === '127.0.0.1' || host === '::1';
+  } catch {
+    return false;
+  }
+}
+
+/** Chat socket. The Tauri page is not served by the daemon, so it must use the core URL. */
+export function chatWebSocketUrl(): string {
+  const backend = getBackendUrl();
+  if (isTauriShell() && backend) {
+    const u = new URL(backend);
+    const proto = u.protocol === 'https:' ? 'wss:' : 'ws:';
+    return `${proto}//${u.host}/ws/chat?_t=${Date.now()}`;
+  }
+  const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  return `${proto}//${window.location.host}/ws/chat?_t=${Date.now()}`;
 }
 
 /** Build a REST URL (e.g. `/id/api/auth/login/`, `/connect/api/conversations/`). */

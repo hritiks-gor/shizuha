@@ -84,7 +84,7 @@ pub struct HealthResult {
 pub const EXPECTED_PROTOCOL_VERSION: u64 = 1;
 
 /// Default URL where the local core is expected to listen.
-pub const DEFAULT_CORE_URL: &str = "http://127.0.0.1:8015";
+pub const DEFAULT_CORE_URL: &str = "http://localhost:8016";
 
 /// Validate that a core URL points to a loopback address.
 ///

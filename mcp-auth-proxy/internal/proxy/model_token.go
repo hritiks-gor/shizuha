@@ -29,6 +29,7 @@ type coordinatorModelTokenRequest struct {
 	PreferredEntryID string `json:"preferred_entry_id,omitempty"`
 	ExcludeEntryID   string `json:"exclude_entry_id,omitempty"`
 	StickyKey        string `json:"sticky_key,omitempty"`
+	Model            string `json:"model,omitempty"`
 }
 
 // coordinatorModelTokenResponse is the subset of fields the coordinator returns
@@ -59,7 +60,8 @@ func fetchModelTokenFromCoordinator(
 	forceRefresh bool,
 	preferredEntryID,
 	excludeEntryID,
-	stickyKey string,
+	stickyKey,
+	model string,
 ) (coordinatorModelTokenResponse, error) {
 	body, err := json.Marshal(coordinatorModelTokenRequest{
 		Provider:         provider,
@@ -67,6 +69,7 @@ func fetchModelTokenFromCoordinator(
 		PreferredEntryID: preferredEntryID,
 		ExcludeEntryID:   excludeEntryID,
 		StickyKey:        stickyKey,
+		Model:            model,
 	})
 	if err != nil {
 		return coordinatorModelTokenResponse{}, fmt.Errorf("marshal: %w", err)
@@ -198,6 +201,7 @@ func (s *Server) handleModelToken(w http.ResponseWriter, r *http.Request) {
 	preferredEntryID := strings.TrimSpace(r.URL.Query().Get("preferred_entry_id"))
 	excludeEntryID := strings.TrimSpace(r.URL.Query().Get("exclude_entry_id"))
 	stickyKey := strings.TrimSpace(r.URL.Query().Get("sticky_key"))
+	model := strings.TrimSpace(r.URL.Query().Get("model"))
 
 	// --- fetch from coordinator ---
 	result, err := fetchModelTokenFromCoordinator(
@@ -209,6 +213,7 @@ func (s *Server) handleModelToken(w http.ResponseWriter, r *http.Request) {
 		preferredEntryID,
 		excludeEntryID,
 		stickyKey,
+		model,
 	)
 	if err != nil {
 		s.audit.Emit("model-token-refused", map[string]any{

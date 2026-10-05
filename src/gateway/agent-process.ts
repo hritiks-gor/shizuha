@@ -30,6 +30,8 @@ import { MaintenanceReaper } from './reaper.js';
 import { WorkspaceGc } from '../workspace-gc.js';
 import { BackgroundTaskRegistry } from '../tasks/registry.js';
 import { isCortexModelId } from '../provider/registry.js';
+import { credentialsPath } from '../config/credentials.js';
+import { syncDesktopChannel, watchDesktopChannel } from '../desktop/attach-channel.js';
 import { GROK_VOICE_UPSTREAM_MODEL, grokVoiceAuthConfigured, isGrokVoiceOmniModel } from '../provider/grok-voice.js';
 import type { VoiceS2SHost } from '../voice-s2s/session.js';
 import {
@@ -1030,6 +1032,7 @@ export class AgentProcess {
   // Core dependencies — lazily initialized
   private store: any = null;
   private providerReg: any = null;
+  private credentialsMtimeMs = 0;
   private provider: any = null;
   /** Access-only Hive xAI lease. Refresh grant stays in Hive TokenPool. */
   private hiveXaiLease: HiveXaiLease | null = null;
@@ -1466,6 +1469,7 @@ export class AgentProcess {
     }
 
     this.providerReg = new ProviderRegistry(cfg);
+    this.credentialsMtimeMs = this.readCredentialsMtime();
     if (this.model === 'auto') {
       this.model = this.providerReg.resolveAutoModel();
     }
@@ -2171,6 +2175,7 @@ export class AgentProcess {
   async start(): Promise<void> {
     if (this.running) return;
     this.running = true;
+    await this.attachDesktopBot();
 
     // Start all channels — they begin pushing messages to the inbox.
     // SCLI-400: a required HTTP channel failure is process-fatal. Do not arm
@@ -2575,6 +2580,9 @@ export class AgentProcess {
     this.refreshContextWindow(this.model, this.provider);
     if (this.maxContextTokens > 0) return this.maxContextTokens;
     const m = (this.model || '').toLowerCase();
+    // Catalog max before the "1m" name heuristic. chatgpt.com/backend-api/codex
+    // clamps a 1_000_000 override; 872k is the ceiling Codex will honor.
+    if (m.startsWith('gpt-6')) return 872_000;
     if (m.includes('1m') || m.includes('-1m')) return 1_000_000;
     if (m.includes('262') || m.includes('256k')) return 262_144;
     if (m.includes('128k')) return 131_072;
@@ -5122,7 +5130,42 @@ export class AgentProcess {
   }
 
   /** Run agent turns until the model stops (no tool calls, max turns, etc.). */
+  private async attachDesktopBot(): Promise<void> {
+    const self = this;
+    const host = {
+      agentUsername: this.config.agentUsername,
+      get running() { return self.running; },
+      registerChannel: (channel: Channel) => self.registerChannel(channel),
+      unregisterChannel: (id: string) => self.unregisterChannel(id),
+      getChannels: () => self.getChannels(),
+      getInbox: () => self.getInbox(),
+    };
+    await syncDesktopChannel(host);
+    watchDesktopChannel(host);
+  }
+
+  private readCredentialsMtime(): number {
+    try {
+      return fs.statSync(credentialsPath()).mtimeMs;
+    } catch {
+      return 0;
+    }
+  }
+
+  /** Pick up a dashboard-saved local endpoint without restarting the agent. */
+  private refreshProvidersIfCredentialsChanged(): void {
+    const mtime = this.readCredentialsMtime();
+    if (!mtime || mtime === this.credentialsMtimeMs) return;
+    this.credentialsMtimeMs = mtime;
+    try {
+      this.providerReg?.reinitialize();
+    } catch (err) {
+      logger.warn({ err }, 'Provider refresh after credential change failed');
+    }
+  }
+
   private async executeTurns(msg: InboundMessage, channel: Channel): Promise<boolean> {
+    this.refreshProvidersIfCredentialsChanged();
     const { executeTurn } = await import('../agent/turn.js');
     const { visibleTextFromContent, reasoningTextFromContent, isProgressOnlyAssistantText } = await import('../agent/content.js');
     const { needsCompaction, estimateOverheadTokens } = await import('../prompt/context.js');
@@ -5184,6 +5227,8 @@ export class AgentProcess {
     // so turn-0 gates of a NEW exchange keep the previous exchange's real
     // measurement instead of falling back to the inflated tiktoken estimate.
     let totalOutputTokens = 0;
+    let totalCacheReadInputTokens = 0;
+    let totalCacheCreationInputTokens = 0;
     let totalToolCalls = 0;
     let sawLoopBreak = false;  // SCLI-60: suppress fast re-arm after loop-guard breaks
     const heartbeatToolCalls: Array<{ name?: string; input?: unknown }> = [];
@@ -5576,6 +5621,8 @@ export class AgentProcess {
             toolCalls: result.toolCalls.length,
             inputTokens: result.inputTokens,
             outputTokens: result.outputTokens,
+            ...(typeof result.cacheReadInputTokens === 'number' ? { cacheReadInputTokens: result.cacheReadInputTokens } : {}),
+            ...(typeof result.cacheCreationInputTokens === 'number' ? { cacheCreationInputTokens: result.cacheCreationInputTokens } : {}),
             toolNames: result.toolCalls.slice(0, 8).map((c: { name?: string }) => c?.name ?? '?'),
             assistantExcerpt: (assistantText || reasoningTextFromContent(result.assistantMessage?.content).trim()).slice(0, 500),
             ...(rejectedReason ? { incompleteReason: rejectedReason } : {}),
@@ -5770,6 +5817,8 @@ export class AgentProcess {
       totalInputTokens += result.inputTokens;
       if (result.inputTokens > 0) this.lastReportedPromptTokens = result.inputTokens; // SCLI-182
       totalOutputTokens += result.outputTokens;
+      if (typeof result.cacheReadInputTokens === 'number') totalCacheReadInputTokens += result.cacheReadInputTokens;
+      if (typeof result.cacheCreationInputTokens === 'number') totalCacheCreationInputTokens += result.cacheCreationInputTokens;
       totalToolCalls += result.toolCalls.length;
       // A long-running inbox row can contain dozens of productive model/tool
       // turns.  Treat each completed turn as live activity; stamping only at
@@ -5793,7 +5842,7 @@ export class AgentProcess {
       if (msg.source === 'heartbeat') {
         this.loopDetector.resetIfNoWrites(heartbeatToolCalls);
       }
-      this.store.updateTokens(this.sessionId, result.inputTokens, result.outputTokens);
+      this.store.updateTokens(this.sessionId, result.inputTokens, result.outputTokens, result.cacheReadInputTokens);
 
       await channel.sendEvent(msg.threadId, {
         type: 'turn_complete',
@@ -5975,8 +6024,8 @@ export class AgentProcess {
       totalTurns: turnIndex,
       totalInputTokens,
       totalOutputTokens,
-      totalCacheCreationInputTokens: 0,
-      totalCacheReadInputTokens: 0,
+      totalCacheCreationInputTokens,
+      totalCacheReadInputTokens,
       totalDurationMs: Date.now() - startTime,
       timestamp: Date.now(),
     });

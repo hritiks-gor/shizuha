@@ -1,5 +1,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import type { ImageAttachment } from '../lib/types';
+import { WaveformIcon } from './WaveformIcon';
+import { useShortWindow } from '../lib/short-window';
 
 import type { TalkPhase } from '../hooks/useTalkMode';
 import type { CallState } from '../hooks/useVoiceCall';
@@ -72,6 +74,7 @@ export function MessageInput({
   const [isDragOver, setIsDragOver] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const short = useShortWindow();
 
   // Auto-resize textarea
   useEffect(() => {
@@ -168,8 +171,8 @@ export function MessageInput({
 
   return (
     <div
-      className={`border-t bg-zinc-900 px-2 sm:px-4 py-3 transition-colors ${
-        isDragOver ? 'border-shizuha-500 bg-shizuha-950/20' : 'border-zinc-800'
+      className={`sd-composer shrink-0 px-3 sm:px-6 transition-colors ${short ? 'pb-1 pt-0' : 'pb-3 pt-1'} ${
+        isDragOver ? 'ring-1 ring-indigo-400/40' : ''
       }`}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
@@ -205,12 +208,11 @@ export function MessageInput({
           </div>
         )}
 
-        <div className="flex items-end gap-2">
-          {/* Image upload button */}
+        <div className="relative rounded-2xl bg-[#14141c] ring-1 ring-white/10 shadow-[0_24px_60px_-28px_rgba(0,0,0,0.85)]">
           <button
             onClick={() => fileInputRef.current?.click()}
-            className="flex-shrink-0 w-10 h-10 rounded-xl bg-zinc-800 hover:bg-zinc-700 flex items-center justify-center transition-colors cursor-pointer"
-            title="Attach image (paste or drag-drop)"
+            className={`absolute left-3 z-10 flex items-center justify-center rounded-xl bg-white/5 text-zinc-400 hover:bg-white/10 hover:text-indigo-200 cursor-pointer ${short ? 'bottom-2 h-8 w-8' : 'bottom-3 h-9 w-9'}`}
+            title="Attach image"
           >
             <svg className="w-4 h-4 text-zinc-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <rect x="3" y="3" width="18" height="18" rx="2" />
@@ -227,19 +229,32 @@ export function MessageInput({
             onChange={handleFileSelect}
           />
 
+          <textarea
+            ref={textareaRef}
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            onKeyDown={handleKeyDown}
+            onPaste={handlePaste}
+            placeholder={placeholder}
+            rows={short ? 1 : 2}
+            className={`w-full resize-none bg-transparent px-4 text-zinc-100 placeholder:text-zinc-500 outline-none ${short ? 'pb-11 pt-2 text-sm' : 'pb-14 pt-4 text-base'}`}
+          />
+          <div className={`absolute right-3 flex items-center gap-2 ${short ? 'bottom-2' : 'bottom-3'}`}>
           {liveAvailable && (
             <button
               type="button"
               data-live-path="s2s"
+              data-testid="desktop-live-button"
               onClick={onToggleLive}
-              className={`flex-shrink-0 h-10 px-3 rounded-xl text-xs font-semibold tracking-wide transition-all cursor-pointer ${
+              className={`flex items-center justify-center rounded-xl transition-colors cursor-pointer ${short ? 'h-8 w-8' : 'h-9 w-9'} ${
                 liveActive
-                  ? 'bg-red-600 hover:bg-red-500 text-white'
-                  : 'bg-cyan-600 hover:bg-cyan-500 text-white shadow-[0_0_18px_rgba(8,145,178,0.35)]'
+                  ? 'bg-white text-neutral-900'
+                  : 'bg-white/5 text-zinc-400 hover:bg-white/10 hover:text-indigo-200'
               }`}
-              title={liveActive ? 'End live voice' : 'Start live voice-to-voice'}
+              title={liveActive ? 'End Live' : 'Start Live voice'}
+              aria-label={liveActive ? 'End Live' : 'Start Live voice'}
             >
-              {liveActive ? 'End Live' : 'Live'}
+              <WaveformIcon className="h-4 w-4" active={liveActive} />
             </button>
           )}
 
@@ -256,14 +271,14 @@ export function MessageInput({
                 }
               }}
               disabled={talkPhase === 'transcribing'}
-              className={`flex-shrink-0 w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer ${
+              className={`flex items-center justify-center rounded-xl transition-colors cursor-pointer ${short ? 'h-8 w-8' : 'h-9 w-9'} ${
                 talkPhase === 'recording'
-                  ? 'bg-red-600 hover:bg-red-500 animate-pulse'
+                  ? 'bg-red-500 text-white animate-pulse'
                   : talkPhase === 'transcribing'
-                    ? 'bg-amber-600 cursor-wait'
+                    ? 'bg-amber-400 text-white cursor-wait'
                     : talkPhase === 'speaking'
-                      ? 'bg-shizuha-600 hover:bg-shizuha-500'
-                      : 'bg-zinc-800 hover:bg-zinc-700'
+                      ? 'bg-indigo-600 text-white'
+                      : 'bg-white/5 text-zinc-400 hover:bg-white/10 hover:text-indigo-200'
               }`}
               title={
                 talkPhase === 'recording' ? `Recording (${recordingDuration}s) — click to stop`
@@ -349,17 +364,7 @@ export function MessageInput({
             </div>
           )}
 
-          <textarea
-            ref={textareaRef}
-            value={value}
-            onChange={(e) => setValue(e.target.value)}
-            onKeyDown={handleKeyDown}
-            onPaste={handlePaste}
-            placeholder={placeholder}
-            rows={1}
-            className="flex-1 resize-none overflow-hidden bg-zinc-800 border border-zinc-700 rounded-xl px-4 py-2.5 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-shizuha-600 focus:ring-1 focus:ring-shizuha-600/30 transition-colors"
-          />
-          {/* Send button — always available. Stop button shown alongside when streaming. */}
+          {/* Send sits with the home icon row. Stop stays beside it while streaming. */}
           {isStreaming && onCancel && (
             <button
               onClick={onCancel}
@@ -374,18 +379,14 @@ export function MessageInput({
           <button
             onClick={handleSubmit}
             disabled={!value.trim() && images.length === 0}
-            className="flex-shrink-0 w-10 h-10 rounded-xl bg-shizuha-600 hover:bg-shizuha-500 disabled:bg-zinc-700 disabled:cursor-not-allowed flex items-center justify-center transition-colors cursor-pointer"
+            className={`flex items-center justify-center rounded-xl bg-indigo-600 text-white hover:bg-indigo-500 disabled:opacity-25 disabled:cursor-not-allowed cursor-pointer ${short ? 'h-8 w-8' : 'h-9 w-9'}`}
             title="Send (Enter)"
           >
-            <svg className="w-4 h-4 text-white" viewBox="0 0 16 16" fill="currentColor">
-              <path d="M1 8.5L7.5 2M7.5 2L14 8.5M7.5 2v12" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round" transform="rotate(-90 8 8)" />
+            <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M4.5 10.5L12 3m0 0l7.5 7.5M12 3v18" />
             </svg>
           </button>
-        </div>
-        <div className="mt-1">
-          <p className="text-[10px] text-zinc-600 text-center">
-            Shift+Enter for newline · Paste or drop images · Enter to send{micSupported ? ' · Click mic for voice' : ''}
-          </p>
+          </div>
         </div>
       </div>
     </div>

@@ -31,34 +31,24 @@ function toPcm16(samples: Float32Array): ArrayBuffer {
   return pcm.buffer;
 }
 
-async function playPcmChunk(bytes: Uint8Array, sampleRate = 24000): Promise<void> {
-  const AudioContextImpl = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-  const ctx = new AudioContextImpl({ sampleRate });
-  const frames = Math.floor(bytes.byteLength / 2);
-  const buffer = ctx.createBuffer(1, frames, sampleRate);
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  const channel = buffer.getChannelData(0);
-  for (let i = 0; i < frames; i += 1) {
-    channel[i] = view.getInt16(i * 2, true) / 32768;
-  }
-  const source = ctx.createBufferSource();
-  source.buffer = buffer;
-  source.connect(ctx.destination);
-  source.start();
-  await new Promise<void>((resolve) => {
-    source.onended = () => {
-      void ctx.close();
-      resolve();
-    };
-  });
-}
-
-function playBase64Pcm(b64: string): void {
-  if (!b64) return;
+function decodeBase64Pcm(b64: string): Uint8Array | null {
+  if (!b64) return null;
   const binary = atob(b64);
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
-  void playPcmChunk(bytes);
+  return bytes;
+}
+
+async function readVoiceProbe(username: string): Promise<{ ok: boolean; message?: string }> {
+  try {
+    const res = await fetch(backendApiUrl(`/v1/voice/s2s?agent=${encodeURIComponent(username)}`));
+    const body = await res.json().catch(() => ({})) as { ok?: boolean; error?: string; model?: string | null };
+    if (body.ok) return { ok: true };
+    if (typeof body.error === 'string' && body.error) return { ok: false, message: body.error };
+    return { ok: false, message: 'Live voice is not ready yet. Click Retry.' };
+  } catch {
+    return { ok: false, message: 'The local core did not answer the voice check.' };
+  }
 }
 
 export function useGrokVoiceS2S(opts: UseGrokVoiceS2SOptions = {}) {
@@ -74,8 +64,38 @@ export function useGrokVoiceS2S(opts: UseGrokVoiceS2SOptions = {}) {
   const captureRef = useRef<{ stop: () => void; setMicEnabled: (on: boolean) => void } | null>(null);
   const optsRef = useRef(opts);
   optsRef.current = opts;
+  const playbackRef = useRef<{ ctx: AudioContext | null; next: number }>({ ctx: null, next: 0 });
+
+  const stopPlayback = useCallback(() => {
+    const ctx = playbackRef.current.ctx;
+    playbackRef.current = { ctx: null, next: 0 };
+    void ctx?.close();
+  }, []);
+
+  const enqueuePcm = useCallback((bytes: Uint8Array, sampleRate = 24000) => {
+    const frames = Math.floor(bytes.byteLength / 2);
+    if (frames <= 0) return;
+    const AudioContextImpl = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+    let ctx = playbackRef.current.ctx;
+    if (!ctx || ctx.state === 'closed') {
+      ctx = new AudioContextImpl({ sampleRate });
+      playbackRef.current = { ctx, next: 0 };
+    }
+    void ctx.resume();
+    const buffer = ctx.createBuffer(1, frames, sampleRate);
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const channel = buffer.getChannelData(0);
+    for (let i = 0; i < frames; i += 1) channel[i] = view.getInt16(i * 2, true) / 32768;
+    const source = ctx.createBufferSource();
+    source.buffer = buffer;
+    source.connect(ctx.destination);
+    const startAt = Math.max(ctx.currentTime + 0.02, playbackRef.current.next);
+    source.start(startAt);
+    playbackRef.current.next = startAt + buffer.duration;
+  }, []);
 
   const teardown = useCallback(() => {
+    stopPlayback();
     captureRef.current?.stop();
     captureRef.current = null;
     const socket = socketRef.current;
@@ -83,7 +103,7 @@ export function useGrokVoiceS2S(opts: UseGrokVoiceS2SOptions = {}) {
     if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) {
       try { socket.close(); } catch { /* noop */ }
     }
-  }, []);
+  }, [stopPlayback]);
 
   const sendJson = useCallback((payload: unknown) => {
     const socket = socketRef.current;
@@ -148,6 +168,47 @@ export function useGrokVoiceS2S(opts: UseGrokVoiceS2SOptions = {}) {
       },
     };
 
+    void (async () => {
+      const probe = await readVoiceProbe(username);
+      if (!activeRef.current) return;
+      if (!probe.ok) {
+        activeRef.current = false;
+        teardown();
+        setCallError({
+          kind: 'not_voice_agent',
+          message: probe.message || 'Live voice is not ready.',
+          canRetry: true,
+        });
+        setCallState('error');
+        return;
+      }
+      openVoiceSocket();
+    })();
+
+    function openVoiceSocket() {
+    // The agent waits up to 15s for xAI session.updated before it sends
+    // ready or an error. A shorter client timer closes that socket first.
+    const SETUP_MS = 22_000;
+    let connectTimer = 0;
+    let settled = false;
+    const settle = (error: LiveCallError | null, state: LiveCallState) => {
+      if (settled || cancelled) return;
+      settled = true;
+      window.clearTimeout(connectTimer);
+      if (error) {
+        activeRef.current = false;
+        teardown();
+        setCallError(error);
+      }
+      setCallState(state);
+    };
+    connectTimer = window.setTimeout(() => {
+      settle({
+        kind: 'stream_unavailable',
+        message: 'Live voice did not become ready. The voice service did not finish setup.',
+        canRetry: true,
+      }, 'error');
+    }, SETUP_MS);
     const socket = new WebSocket(realtimeVoiceUrl(username));
     socket.binaryType = 'arraybuffer';
     socketRef.current = socket;
@@ -165,26 +226,23 @@ export function useGrokVoiceS2S(opts: UseGrokVoiceS2SOptions = {}) {
       if (cancelled || !activeRef.current) return;
       if (typeof event.data !== 'string') {
         setCallState('speaking');
-        void playPcmChunk(new Uint8Array(event.data as ArrayBuffer));
+        enqueuePcm(new Uint8Array(event.data as ArrayBuffer));
         return;
       }
       let msg: { type?: string; message?: string; code?: string; delta?: string; transcript?: string; text?: string; audio?: string };
       try { msg = JSON.parse(event.data); } catch { return; }
       const type = String(msg.type || '');
       if (type === 'ready' || type === 'session.updated') {
-        setCallState(mutedRef.current ? 'listening' : 'listening');
         ready = true;
+        settle(null, 'listening');
         return;
       }
       if (type === 'error') {
-        activeRef.current = false;
-        teardown();
-        setCallError({
+        settle({
           kind: msg.code || 'stream_unavailable',
           message: msg.message || 'Live voice session failed.',
           canRetry: msg.code !== 'out_of_credits',
-        });
-        setCallState('error');
+        }, 'error');
         return;
       }
       if (type === 'input_audio_transcription.completed' || type === 'conversation.item.input_audio_transcription.completed') {
@@ -220,7 +278,8 @@ export function useGrokVoiceS2S(opts: UseGrokVoiceS2SOptions = {}) {
       }
       if (type === 'response.output_audio.delta' || type === 'response.audio.delta') {
         setCallState('speaking');
-        playBase64Pcm(String(msg.delta || msg.audio || ''));
+        const pcm = decodeBase64Pcm(String(msg.delta || msg.audio || ''));
+        if (pcm) enqueuePcm(pcm);
         return;
       }
       if (type === 'response.done' || type === 'response.completed') {
@@ -229,14 +288,11 @@ export function useGrokVoiceS2S(opts: UseGrokVoiceS2SOptions = {}) {
     };
 
     socket.onerror = () => {
-      if (cancelled || !activeRef.current) return;
-      setCallError({ kind: 'stream_unavailable', message: 'Could not reach the Live voice socket.', canRetry: true });
-      setCallState('error');
+      settle({ kind: 'stream_unavailable', message: 'Could not reach the Live voice socket.', canRetry: true }, 'error');
     };
     socket.onclose = () => {
-      if (cancelled || !activeRef.current) return;
-      setCallError({ kind: 'stream_unavailable', message: 'Live voice disconnected.', canRetry: true });
-      setCallState('error');
+      if (ready) return;
+      settle({ kind: 'stream_unavailable', message: 'Live voice disconnected before it was ready.', canRetry: true }, 'error');
     };
 
     void (async () => {
@@ -279,7 +335,8 @@ export function useGrokVoiceS2S(opts: UseGrokVoiceS2SOptions = {}) {
         setCallState('error');
       }
     })();
-  }, [teardown]);
+    }
+  }, [teardown, enqueuePcm]);
 
   const startCall = useCallback(() => {
     if (activeRef.current) return;

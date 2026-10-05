@@ -42,6 +42,32 @@ export async function mintCortexKey(accessToken: string, name: string): Promise<
   return key as string;
 }
 
+/**
+ * After Shizuha ID login has stored a JWT, mint a personal Cortex key when
+ * one is not already on disk. Desktop voice reads that key. A mint failure
+ * does not undo the ID login — the caller shows `warning`.
+ */
+export async function provisionCortexKeyForCurrentLogin(label = 'shizuha-desktop'): Promise<{ cortex: boolean; warning?: string }> {
+  const { readCredentials } = await import('../config/credentials.js');
+  const existing = (readCredentials().cortex?.apiKey || '').trim();
+  if (existing && !existing.startsWith('eyJ')) return { cortex: true };
+  const auth = readShizuhaAuth();
+  if (!auth?.accessToken) {
+    return { cortex: false, warning: 'Signed in, but no access token was stored.' };
+  }
+  let host = 'desktop';
+  try { host = os.hostname() || host; } catch { /* ignore */ }
+  const day = new Date().toISOString().slice(0, 10);
+  try {
+    const key = await mintCortexKey(auth.accessToken, `${label} ${host} ${day}`);
+    setCortexApiKey(key);
+    return { cortex: true };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Could not provision a Cortex key.';
+    return { cortex: false, warning: message };
+  }
+}
+
 /** Full flow: sign in to Shizuha ID, mint a Cortex key from the JWT, persist it. */
 export async function loginAndProvision(emailOrUsername: string, password: string): Promise<LoginResult> {
   const res = await loginToShizuhaId(emailOrUsername, password);

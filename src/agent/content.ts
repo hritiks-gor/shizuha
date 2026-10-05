@@ -35,9 +35,11 @@ export function hasVisibleAssistantText(content: Message['content']): boolean {
 }
 
 /**
- * True when the assistant only narrated intended next work instead of answering
- * or actually calling a tool. These are not valid terminal answers for an agent
- * loop because the UI will otherwise go idle after "Let me search..." forever.
+ * True when visible text only announces work and never did it.
+ * Heartbeats use this to record an incomplete drain. An interactive or agent
+ * turn does not start another completion because of it: the model's stop
+ * reason is the terminal signal. Continuing from that assistant prefix sends
+ * two assistant messages and Cortex rejects the next request.
  */
 export function isProgressOnlyAssistantText(text: string): boolean {
   const normalized = text.replace(/\s+/g, ' ').trim();

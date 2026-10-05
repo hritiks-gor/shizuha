@@ -1,6 +1,7 @@
 import OpenAI from 'openai';
 import type { LLMProvider, ChatMessage, ChatOptions, StreamChunk, ChatContentBlock } from './types.js';
 import { logger } from '../utils/logger.js';
+import { usageCacheFromRecord } from './usage-cache.js';
 
 /**
  * OpenRouter provider — routes to 200+ models via a single API key.
@@ -141,6 +142,7 @@ export class OpenRouterProvider implements LLMProvider {
           max_tokens: options.maxTokens ?? 16384,
           temperature: options.temperature ?? 0,
           stream: true,
+          stream_options: { include_usage: true },
           ...(tools?.length ? { tools } : {}),
           ...(options.stopSequences?.length ? { stop: options.stopSequences } : {}),
         });
@@ -148,9 +150,18 @@ export class OpenRouterProvider implements LLMProvider {
         const toolCalls = new Map<number, { id: string; name: string; args: string }>();
         let inputTokens = 0;
         let outputTokens = 0;
+        let cacheReadInputTokens: number | undefined;
+        let cacheCreationInputTokens: number | undefined;
 
         for await (const chunk of stream) {
-          const choice = chunk.choices[0];
+          if (chunk.usage) {
+            inputTokens = chunk.usage.prompt_tokens ?? 0;
+            outputTokens = chunk.usage.completion_tokens ?? 0;
+            const cache = usageCacheFromRecord(chunk.usage);
+            if (cache.cacheReadInputTokens !== undefined) cacheReadInputTokens = cache.cacheReadInputTokens;
+            if (cache.cacheCreationInputTokens !== undefined) cacheCreationInputTokens = cache.cacheCreationInputTokens;
+          }
+          const choice = chunk.choices?.[0];
           if (!choice) continue;
           const delta = choice.delta;
 
@@ -175,11 +186,6 @@ export class OpenRouterProvider implements LLMProvider {
             }
           }
 
-          if (chunk.usage) {
-            inputTokens = chunk.usage.prompt_tokens ?? 0;
-            outputTokens = chunk.usage.completion_tokens ?? 0;
-          }
-
           if (choice.finish_reason) {
             for (const [, tc] of toolCalls) {
               try {
@@ -192,8 +198,14 @@ export class OpenRouterProvider implements LLMProvider {
           }
         }
 
-        if (inputTokens || outputTokens) {
-          yield { type: 'usage', inputTokens, outputTokens };
+        if (inputTokens || outputTokens || cacheReadInputTokens != null || cacheCreationInputTokens != null) {
+          yield {
+            type: 'usage',
+            inputTokens,
+            outputTokens,
+            ...(cacheReadInputTokens != null ? { cacheReadInputTokens } : {}),
+            ...(cacheCreationInputTokens != null ? { cacheCreationInputTokens } : {}),
+          };
         }
         yield { type: 'done' };
         return;

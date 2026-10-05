@@ -10,15 +10,18 @@ import {
 describe('Hive xAI access-only lease', () => {
   it('recognizes the explicit Hive xAI Grok Build model and rejects Cortex offers', () => {
     expect(isHiveDirectXaiGrokModel(HIVE_XAI_GROK_MODEL)).toBe(true);
+    expect(isHiveDirectXaiGrokModel('xai:grok-4.7')).toBe(true);
     expect(isHiveDirectXaiGrokModel('xai:grok-4.6')).toBe(true);
     expect(isHiveDirectXaiGrokModel('xai:grok-4.5')).toBe(true);
     expect(isHiveDirectXaiGrokModel('cortex/grok-4.5')).toBe(false);
     expect(isHiveDirectXaiGrokModel('cortex/grok-4.6')).toBe(false);
     expect(isHiveDirectXaiGrokModel('xai/grok-4.5')).toBe(false);
     expect(isHiveDirectXaiGrokModel('grok-4.5')).toBe(false);
-    expect(hiveDirectXaiUpstreamModel('xai:grok-4.6')).toBe('grok-4.6');
+    expect(hiveDirectXaiUpstreamModel('xai:grok-4.7')).toBe('grok-4.7');
+    expect(hiveDirectXaiUpstreamModel('xai:grok-4.6')).toBe('grok-4.7');
+    expect(hiveDirectXaiUpstreamModel('grok-4.6-latest')).toBe('grok-4.7');
     expect(hiveDirectXaiUpstreamModel('xai:grok-4.5')).toBe('grok-4.5');
-    expect(hiveDirectXaiUpstreamModel('grok-4.6')).toBe('grok-4.6');
+    expect(hiveDirectXaiUpstreamModel('grok-4.6')).toBe('grok-4.7');
   });
 
   it('accepts coordinator access-only payloads and refuses a refresh token copy', () => {

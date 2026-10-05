@@ -1643,7 +1643,7 @@ authCmd
       return;
     }
     console.log('\n  Cortex key saved to ~/.shizuha/credentials.json');
-    console.log('  Use it: shizuha exec -p "hello" --model cortex/grok-4.6');
+    console.log('  Use it: shizuha exec -p "hello" --model cortex/grok-4.7');
     console.log('  Or just run: shizuha');
   });
 
@@ -3359,9 +3359,9 @@ async function* runAgentWithPrompt(
         lastProviderPromptEstimate = result.providerPromptEstimate;
       }
       totalOutputTokens += result.outputTokens;
-      if (result.cacheCreationInputTokens) totalCacheCreationInputTokens += result.cacheCreationInputTokens;
-      if (result.cacheReadInputTokens) totalCacheReadInputTokens += result.cacheReadInputTokens;
-      store.updateTokens(session.id, result.inputTokens, result.outputTokens);
+      if (typeof result.cacheCreationInputTokens === 'number') totalCacheCreationInputTokens += result.cacheCreationInputTokens;
+      if (typeof result.cacheReadInputTokens === 'number') totalCacheReadInputTokens += result.cacheReadInputTokens;
+      store.updateTokens(session.id, result.inputTokens, result.outputTokens, result.cacheReadInputTokens);
 
       if (toolSearchEnabled) {
         const newToolDefs = getToolDefs();

@@ -1,11 +1,46 @@
 import { describe, expect, it } from 'vitest';
-import { repairFusedToolName, salvageGlmToolCall } from '../../src/provider/vllm';
+import { dispatchToolName, repairFusedToolName, salvageGlmToolCall, streamedToolCallIdForNewBuilder, streamedToolCallIdentityChanged } from '../../src/provider/vllm';
 
 // The two payloads below are verbatim from the frozen repro dumps of
 // GLM-5.2-QuantTrio on impossible-constraint-solver (2026-07-26). Both were
 // previously dropped to `{}`, so solver.py and test_solver.py were never
 // written and the task was graded "test_solver.py NOT FOUND".
 const KNOWN = ['write', 'write_memory', 'bash', 'read', 'edit', 'apply_patch'];
+
+describe('streamedToolCallIdentityChanged', () => {
+  const open = { id: 'call_1', name: 'message_user' };
+
+  it('treats argument-only chunks as the same call', () => {
+    expect(streamedToolCallIdentityChanged(open, { function: { name: '' } })).toBe(false);
+    expect(streamedToolCallIdentityChanged(open, { id: 'call_1' })).toBe(false);
+    expect(streamedToolCallIdentityChanged(open, { function: { name: 'message_user' } })).toBe(false);
+  });
+
+  it('splits when a reused index carries a new id or a different name', () => {
+    expect(streamedToolCallIdentityChanged(open, { id: 'call_2', function: { name: 'bash' } })).toBe(true);
+    expect(streamedToolCallIdentityChanged(open, { function: { name: 'bash' } })).toBe(true);
+  });
+});
+
+describe('streamedToolCallIdForNewBuilder', () => {
+  const parked = { id: 'call_1' };
+
+  it('keeps a distinct incoming id and mints when the parked id is reused or absent', () => {
+    expect(streamedToolCallIdForNewBuilder(parked, 'call_2')).toBe('call_2');
+    expect(streamedToolCallIdForNewBuilder(undefined, 'call_1')).toBe('call_1');
+    expect(streamedToolCallIdForNewBuilder(parked, 'call_1')).not.toBe('call_1');
+    expect(streamedToolCallIdForNewBuilder(parked, '')).not.toBe('call_1');
+    expect(streamedToolCallIdForNewBuilder(parked, undefined)).toMatch(/^vllm_/);
+  });
+});
+
+describe('dispatchToolName', () => {
+  it('keeps a registered name and splits a welded one', () => {
+    expect(dispatchToolName('message_user', KNOWN)).toBe('message_user');
+    expect(dispatchToolName('write_file_path/workspace/solver.py', KNOWN)).toBe('write');
+    expect(dispatchToolName('not_a_tool', KNOWN)).toBe('not_a_tool');
+  });
+});
 
 describe('repairFusedToolName', () => {
   it('returns a name that is already valid', () => {

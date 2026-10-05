@@ -18,6 +18,7 @@ describe('new provider classes (xAI / Groq / Together)', () => {
     const p = new XaiProvider('test-key');
     expect(p.name).toBe('xai');
     expect(p.baseURL).toBe('https://api.x.ai/v1');
+    expect(ctxFor(p, 'grok-4.7')).toBe(500000);
     expect(ctxFor(p, 'grok-4.6')).toBe(500000);
     expect(ctxFor(p, 'grok-4.5')).toBe(500000);
     expect(ctxFor(p, 'grok-4')).toBe(256000);
@@ -53,6 +54,11 @@ describe('grok- model profile (no longer DEFAULT_PROFILE)', () => {
   });
 
   it('matches grok-4.6 / grok-4.5 at the served 500K SuperGrok window', () => {
+    const g47 = getModelProfile('cortex/grok-4.7');
+    expect(g47.displayName).toBe('Grok 4.7');
+    expect(g47.nativeContextWindow).toBe(500000);
+    expect(g47.defaultReasoningEffort).toBe('medium');
+    expect(g47.benefitsFromPrefixCaching).toBe(true);
     const g46 = getModelProfile('cortex/grok-4.6');
     expect(g46.displayName).toBe('Grok 4.6');
     expect(g46.nativeContextWindow).toBe(500000);
@@ -70,6 +76,9 @@ describe('grok- model profile (no longer DEFAULT_PROFILE)', () => {
     delete process.env['REASONING_EFFORT'];
     delete process.env['SHIZUHA_ALLOW_GROK_HIGH_REASONING'];
     try {
+      expect(resolveReasoningEffortForRequest('cortex/grok-4.7', { reasoningEffort: 'high' })).toBe('low');
+      expect(resolveReasoningEffortForRequest('cortex/grok-4.7', { reasoningEffort: 'medium' })).toBe('medium');
+      expect(resolveReasoningEffortForRequest('cortex/grok-4.7')).toBe('medium');
       expect(resolveReasoningEffortForRequest('cortex/grok-4.6', { reasoningEffort: 'high' })).toBe('low');
       expect(resolveReasoningEffortForRequest('cortex/grok-4.6')).toBe('low');
       process.env['SHIZUHA_ALLOW_GROK_HIGH_REASONING'] = '1';

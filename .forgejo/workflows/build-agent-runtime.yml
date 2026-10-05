@@ -456,19 +456,21 @@ jobs:
                 tolerations:
                   - { key: node.shizuha/workstation, operator: Exists, effect: NoSchedule }
                   - { key: shizuha.com/inference-paused, operator: Exists, effect: NoSchedule }
-                  # amd64 kaniko on i9-ws times out pushing to the in-cluster
-                  # registry ClusterIP (ORIG-253 asymmetric pod-CIDR routing);
-                  # s1's overlay works but carries operator=unschedulable.
-                  # Tolerate the s1 hold for CI Jobs (do not remove the taint)
-                  # and exclude i9-ws below.
+                  # Keep the s1 hold available as fallback capacity; healthy
+                  # workstations are preferred after their registry path has
+                  # passed test-runtime-builder-registry upload/read/cleanup.
                   - { key: operator, operator: Equal, value: unschedulable, effect: NoSchedule }
                 affinity:
                   nodeAffinity:
+                    preferredDuringSchedulingIgnoredDuringExecution:
+                      - weight: 100
+                        preference:
+                          matchExpressions:
+                            - { key: kubernetes.io/hostname, operator: NotIn, values: [s1] }
                     requiredDuringSchedulingIgnoredDuringExecution:
                       nodeSelectorTerms:
                       - matchExpressions:
                         - { key: node-role.kubernetes.io/control-plane, operator: DoesNotExist }
-                        - { key: kubernetes.io/hostname, operator: NotIn, values: [i9-ws] }
                 initContainers:
                   # busybox sh only (alpine/git) — POSIX, no bashisms.
                   - name: git-clone

@@ -253,14 +253,15 @@ describe('daemon dashboard host exposure', () => {
       .toBe(`http://localhost:${daemonHttpPort}`);
     expect(resolveBareMetalCodexBrokerUrl()).toBe(`http://localhost:${daemonHttpPort}/v1/codex/token`);
     expect(resolveContainerCodexBrokerUrl()).toBe(`http://host.docker.internal:${daemonHttpPort}/v1/codex/token`);
-    expect(resolveDashboardBindHosts()).toEqual(['localhost']);
+    expect(resolveDashboardBindHosts()).toEqual(['localhost', '127.0.0.1']);
     expect(resolveDashboardBindHosts({ containerMode: true, hostGateway: '172.18.0.1' })).toEqual([
       'localhost',
+      '127.0.0.1',
       '172.18.0.1',
     ]);
     expect(resolveDashboardListenerPlan({ containerMode: true, hostGateway: '172.18.0.1' })).toEqual({
       primaryHost: 'localhost',
-      proxyHosts: ['172.18.0.1'],
+      proxyHosts: ['127.0.0.1', '172.18.0.1'],
     });
 
     process.env['SHIZUHA_DASHBOARD_REMOTE'] = '1';

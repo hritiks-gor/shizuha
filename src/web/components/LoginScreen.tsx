@@ -177,15 +177,13 @@ export function LoginScreen({ onLogin, error, isLoading }: LoginScreenProps) {
   );
 
   return (
-    <div className="h-[100dvh] flex items-center justify-center bg-zinc-950 px-4">
-      <div className="w-full max-w-sm">
-        {/* Logo */}
+    <div className="sd-stage h-[100dvh] flex items-center justify-center px-4">
+      <div className="sd-panel w-full max-w-sm px-6 py-8">
         <div className="text-center mb-8">
-          <div className="w-14 h-14 rounded-2xl bg-shizuha-600/20 flex items-center justify-center mx-auto mb-4">
-            <span className="text-2xl font-bold text-shizuha-400">S</span>
-          </div>
-          <h1 className="text-xl font-semibold text-zinc-100">Shizuha</h1>
-          <p className="text-sm text-zinc-500 mt-1">Sign in to your dashboard</p>
+          <div className="sd-mark mx-auto mb-4 text-2xl font-bold text-cyan-200">S</div>
+          <p className="sd-kicker">Shizuha Desktop</p>
+          <h1 className="mt-2 text-xl font-semibold tracking-tight">Shizuha</h1>
+          <p className="text-sm text-zinc-400 mt-1">Sign in to your dashboard</p>
         </div>
 
         {/* Login form */}
@@ -202,7 +200,7 @@ export function LoginScreen({ onLogin, error, isLoading }: LoginScreenProps) {
               autoComplete="username"
               autoFocus
               disabled={isLoading}
-              className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3.5 py-2.5 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-shizuha-600 focus:ring-1 focus:ring-shizuha-600/30 transition-colors disabled:opacity-50"
+              className="sd-field px-3.5 py-2.5 text-sm placeholder-zinc-500 disabled:opacity-50"
               placeholder="shizuha"
             />
           </div>
@@ -218,7 +216,7 @@ export function LoginScreen({ onLogin, error, isLoading }: LoginScreenProps) {
               onChange={(e) => setPassword(e.target.value)}
               autoComplete="current-password"
               disabled={isLoading}
-              className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3.5 py-2.5 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-shizuha-600 focus:ring-1 focus:ring-shizuha-600/30 transition-colors disabled:opacity-50"
+              className="sd-field px-3.5 py-2.5 text-sm placeholder-zinc-500 disabled:opacity-50"
               placeholder="Password"
             />
           </div>

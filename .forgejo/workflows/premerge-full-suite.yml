@@ -59,7 +59,17 @@ jobs:
         env:
           # Bound through env rather than interpolated into shell text
           # (semgrep run-shell-injection / CWE-78; the fix PLAT-4740 applied here).
-          SOURCE_SHA: ${{ github.sha }}
+          # PLAT-10187: on pull_request events, `github.sha` resolves to the BASE
+          # branch tip on Forgejo actions — NOT the PR head. Three runs (7340/7346/
+          # 7352, 09-24/25) verified three different SHAs (ea25cd9/0ee41e9/bc076468),
+          # none the head they posted their status to: the gate green-lit/red-barred
+          # PR heads with other branches' suites. Use the event's PR head SHA, with
+          # the push-event fallback to github.sha.
+          SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          # PLAT-4734: the same expression is bound here as an env value (never
+          # interpolated into a shell body — the context-injection guard fails
+          # that shape); the run body reads it as a plain variable.
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           set -euo pipefail
           SHORT="$(printf '%s' "$SOURCE_SHA" | cut -c1-7)"
@@ -138,6 +148,13 @@ jobs:
                           git checkout "\${EXPECTED_SHA}"
                         fi
                         test "\$(git rev-parse HEAD)" = "\${EXPECTED_SHA}"
+                        # PLAT-10187 non-regression: emit OBSERVED provenance into the
+                        # container log. The dispatcher's final gate greps this marker
+                        # and fails closed unless the tree the suite ACTUALLY ran is
+                        # the PR head — closing the loop with evidence, not assumption
+                        # (a SOURCE_SHA/HEAD_SHA comparison of two identically-derived
+                        # expressions is a tautology and proves nothing).
+                        echo "fullsuite checked-out: \$(git rev-parse HEAD)"
                         # The suite does not use git (scripts/ci/full-ci.mjs has no git
                         # dependency), so remove the metadata rather than sanitising it.
                         rm -rf /workspace/src/.git
@@ -301,6 +318,13 @@ jobs:
           if [ -z "${LOG}" ]; then
             LOG="$(kubectl -n build logs -l "job-name=${JOB}" --all-containers --tail=400 2>/dev/null || true)"
           fi
+          # PLAT-10187: job-level --tail=400 cannot be relied on to retain the
+          # git-clone init container's provenance marker (the suite container's
+          # log floods it out). Fetch the init container explicitly and prepend;
+          # both sources are evidence, the marker grep below needs the init one.
+          CLONE_LOG="$(kubectl -n build logs "job/${JOB}" -c git-clone --tail=50 2>/dev/null || \
+                      kubectl -n build logs -l "job-name=${JOB}" -c git-clone --tail=50 2>/dev/null || true)"
+          LOG="${CLONE_LOG}"$'\n'"${LOG}"
           printf '%s\n' "$LOG" | tail -40
           kubectl -n build delete job "${JOB}" --ignore-not-found
 
@@ -320,4 +344,28 @@ jobs:
             echo "::error::full suite collected ${PASSED:-0} tests — a green run that verified nothing. Refusing to pass."
             exit 1
           fi
-          echo "full suite verified: ${SUMMARY} at ${SOURCE_SHA}"
+          # PLAT-10187 non-regression: the verified SHA must BE the PR head — a
+          # suite run against any other tree must fail the gate, not pass it.
+          HEAD_SHA="${PR_HEAD_SHA:-}"
+          if [ -n "${HEAD_SHA}" ] && [ "${SOURCE_SHA}" != "${HEAD_SHA}" ]; then
+            echo "::error::gate verified ${SOURCE_SHA} but the PR head is ${HEAD_SHA} — refusing to post a verdict for a tree that never ran"
+            exit 1
+          fi
+          # Observed-provenance gate (PLAT-10187): the SOURCE_SHA==HEAD_SHA check
+          # above compares two identically-derived expressions — a tautology that
+          # cannot catch a dispatcher/event mismatch. The Job's git-clone container
+          # emits `fullsuite checked-out: <sha>` for the tree it ACTUALLY ran after
+          # its own rev-parse assertion. Require that observed SHA and require it
+          # to be the PR head. Missing marker = fail closed.
+          set +e
+          OBSERVED="$(printf '%s\n' "$LOG" | grep -oE 'fullsuite checked-out: [0-9a-f]{40}' | tail -1 | awk '{print $3}')"
+          set -e
+          if [ -z "${OBSERVED}" ]; then
+            echo "::error::no checked-out provenance marker in Job log — cannot prove which tree the suite ran. Refusing to pass."
+            exit 1
+          fi
+          if [ -n "${HEAD_SHA}" ] && [ "${OBSERVED}" != "${HEAD_SHA}" ]; then
+            echo "::error::Job checked out ${OBSERVED} but the PR head is ${HEAD_SHA} — verdict would describe a tree that never ran. Refusing to pass."
+            exit 1
+          fi
+          echo "full suite verified: ${SUMMARY} at ${SOURCE_SHA} (observed ${OBSERVED}; PR head ${HEAD_SHA})"

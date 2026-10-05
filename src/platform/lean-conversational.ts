@@ -143,7 +143,7 @@ export function talkSeatSuppressesTools(env: NodeJS.ProcessEnv = process.env): b
   return raw === '1' || raw === 'true' || raw === 'on';
 }
 
-/** DeepSeek talk seats can disable thinking (live Cortex 200). grok-4.6/4.5
+/** DeepSeek talk seats can disable thinking (live Cortex 200). grok-4.7/4.6/4.5
  *  cannot — xAI returns 400 for off/none/disabled. */
 export function talkSeatDisablesThinking(
   modelName: string,
@@ -151,7 +151,7 @@ export function talkSeatDisablesThinking(
 ): boolean {
   if (talkPromptMode(env) === 'full') return false;
   const id = (modelName || '').toLowerCase();
-  if (id.includes('grok-4.6') || id.includes('grok-4.5')) return false;
+  if (id.includes('grok-4.7') || id.includes('grok-4.6') || id.includes('grok-4.5')) return false;
   return id.includes('deepseek');
 }
 

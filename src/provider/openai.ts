@@ -1,6 +1,7 @@
 import OpenAI from 'openai';
 import type { LLMProvider, ChatMessage, ChatOptions, StreamChunk, ChatContentBlock } from './types.js';
 import { logger } from '../utils/logger.js';
+import { usageCacheFromRecord } from './usage-cache.js';
 
 const MODEL_CONTEXT: Record<string, number> = {
   'gpt-4o': 128000,
@@ -209,6 +210,7 @@ export class OpenAIProvider implements LLMProvider {
           max_tokens: options.maxTokens ?? 16384,
           temperature: options.temperature ?? 0,
           stream: true,
+          stream_options: { include_usage: true },
           ...(tools?.length ? { tools } : {}),
           ...(options.stopSequences?.length ? { stop: options.stopSequences } : {}),
           // CTX-292: the OpenAI-standard `user` field carries our session id so
@@ -220,9 +222,20 @@ export class OpenAIProvider implements LLMProvider {
         const toolCalls = new Map<number, { id: string; name: string; args: string }>();
         let inputTokens = 0;
         let outputTokens = 0;
+        let cacheReadInputTokens: number | undefined;
+        let cacheCreationInputTokens: number | undefined;
         let rateLimitEmitted = false;
 
         for await (const chunk of stream) {
+          // Usage can arrive on a choiceless final chunk (stream_options.include_usage).
+          // Read it before skipping that chunk, including a measured cache of 0.
+          if (chunk.usage) {
+            inputTokens = chunk.usage.prompt_tokens ?? 0;
+            outputTokens = chunk.usage.completion_tokens ?? 0;
+            const cache = usageCacheFromRecord(chunk.usage);
+            if (cache.cacheReadInputTokens !== undefined) cacheReadInputTokens = cache.cacheReadInputTokens;
+            if (cache.cacheCreationInputTokens !== undefined) cacheCreationInputTokens = cache.cacheCreationInputTokens;
+          }
           // Extract rate limit headers once
           if (!rateLimitEmitted && options.onRateLimit) {
             try {
@@ -238,7 +251,7 @@ export class OpenAIProvider implements LLMProvider {
               }
             } catch { /* skip */ }
           }
-          const choice = chunk.choices[0];
+          const choice = chunk.choices?.[0];
           if (!choice) continue;
           const delta = choice.delta;
 
@@ -265,12 +278,6 @@ export class OpenAIProvider implements LLMProvider {
             }
           }
 
-          // Usage
-          if (chunk.usage) {
-            inputTokens = chunk.usage.prompt_tokens ?? 0;
-            outputTokens = chunk.usage.completion_tokens ?? 0;
-          }
-
           // Finish
           if (choice.finish_reason) {
             // Emit completed tool calls
@@ -281,8 +288,14 @@ export class OpenAIProvider implements LLMProvider {
           }
         }
 
-        if (inputTokens || outputTokens) {
-          yield { type: 'usage', inputTokens, outputTokens };
+        if (inputTokens || outputTokens || cacheReadInputTokens != null || cacheCreationInputTokens != null) {
+          yield {
+            type: 'usage',
+            inputTokens,
+            outputTokens,
+            ...(cacheReadInputTokens != null ? { cacheReadInputTokens } : {}),
+            ...(cacheCreationInputTokens != null ? { cacheCreationInputTokens } : {}),
+          };
         }
         yield { type: 'done' };
         return; // Success

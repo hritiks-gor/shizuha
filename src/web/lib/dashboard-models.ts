@@ -28,8 +28,13 @@ export function dedupeDashboardModels(models: Array<string | null | undefined>):
 export async function fetchDashboardModels(): Promise<string[]> {
   const res = await fetch('/v1/models');
   if (!res.ok) throw new Error(`Failed to fetch models: ${res.status}`);
-  const data = await res.json() as { models?: Array<{ slug?: string }> };
-  return dedupeDashboardModels((data.models ?? []).map((entry) => entry.slug));
+  const data = await res.json() as { models?: Array<{ slug?: string; provider?: string }> };
+  const slugs = (data.models ?? []).map((entry) => entry.slug);
+  const hasCortex = (data.models ?? []).some((entry) => entry.provider === 'cortex' || (entry.slug ?? '').startsWith('cortex/'));
+  if (hasCortex && !slugs.some((slug) => (slug ?? '').includes('grok-voice'))) {
+    slugs.push('cortex/grok-voice-think-fast-2.0');
+  }
+  return dedupeDashboardModels(slugs);
 }
 
 const DEFAULT_PROVIDERS = ['anthropic', 'openai', 'google', 'copilot', 'codex', 'cortex', 'ollama', 'litellm', 'vllm', 'openrouter', 'llamacpp', 'deepseek', 'mistral', 'xai'];

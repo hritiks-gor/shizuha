@@ -34,6 +34,7 @@ import { assertAgentCredentialScope } from './agent-credential.js';
 // mail-sync.ts is no longer used — mail sync is handled by shizuha-mail service
 // which POSTs to /v1/webhooks/mail when new messages arrive
 import { getShizuhaAuthStatus, loginToShizuhaId, clearShizuhaAuth, readShizuhaAuth, getValidShizuhaAccessToken } from '../config/shizuhaAuth.js';
+import { provisionCortexKeyForCurrentLogin } from '../auth/shizuha-login.js';
 import {
   readCredentials,
   writeCredentials,
@@ -4390,7 +4391,7 @@ export async function startDashboard(config: DashboardConfig): Promise<void> {
       transport: 's2s',
       via: 'scli',
       agent: agent.username,
-      model: probe.model ?? agent.model ?? null,
+      model: probe.model ?? null,
       tools: probe.tools ?? [],
     };
   });
@@ -5514,6 +5515,7 @@ export async function startDashboard(config: DashboardConfig): Promise<void> {
       email?: string;
       role?: string;
       executionMethod?: string;
+      runtimeEnvironment?: string;
       skills?: string[];
       personalityTraits?: Record<string, string>;
       modelFallbacks?: Array<{ method: string; model: string }>;
@@ -5551,6 +5553,7 @@ export async function startDashboard(config: DashboardConfig): Promise<void> {
       email: body.email,
       role: body.role,
       executionMethod: body.executionMethod,
+      runtimeEnvironment: body.runtimeEnvironment,
       skills: body.skills,
       personalityTraits: body.personalityTraits,
       modelFallbacks: body.modelFallbacks,
@@ -6042,7 +6045,14 @@ export async function startDashboard(config: DashboardConfig): Promise<void> {
       const result = await loginToShizuhaId(username, password, platformUrl || undefined);
       // Sync daemon state so resolveBackendUrl() picks it up immediately.
       if (platformUrl) setPlatformUrl(platformUrl.replace(/\/+$/, ''));
-      return { ok: true, username: result.username };
+      // Desktop Live voice mints through the stored Cortex key, not the ID JWT.
+      const cortex = await provisionCortexKeyForCurrentLogin();
+      return {
+        ok: true,
+        username: result.username,
+        cortex: cortex.cortex,
+        ...(cortex.warning ? { warning: cortex.warning } : {}),
+      };
     } catch (err) {
       return reply.status(401).send({ error: (err as Error).message });
     }
@@ -6772,6 +6782,37 @@ export async function startDashboard(config: DashboardConfig): Promise<void> {
       return { ok: true };
     },
   );
+
+  // One personal Telegram or Discord bot for a local agent. The token is
+  // the user's own bot token. Shizuha ID is not required.
+  app.get('/v1/desktop/channels', async () => {
+    const { readDesktopChannel, desktopChannelPublicView } = await import('../desktop/channels.js');
+    return desktopChannelPublicView(readDesktopChannel());
+  });
+
+  app.put<{ Body: { kind?: string; token?: string; agentUsername?: string; allow?: string } }>(
+    '/v1/desktop/channels',
+    async (request, reply) => {
+      const { writeDesktopChannel } = await import('../desktop/channels.js');
+      const kind = request.body?.kind;
+      const token = request.body?.token?.trim() ?? '';
+      const agentUsername = request.body?.agentUsername?.trim() ?? '';
+      const allow = request.body?.allow?.trim() ?? '';
+      if (kind !== 'telegram' && kind !== 'discord') {
+        return reply.status(400).send({ error: 'kind must be telegram or discord' });
+      }
+      if (token.length < 10) return reply.status(400).send({ error: 'Bot token is required' });
+      if (!agentUsername) return reply.status(400).send({ error: 'Agent username is required' });
+      writeDesktopChannel({ kind, token, agentUsername, allow });
+      return { ok: true };
+    },
+  );
+
+  app.delete('/v1/desktop/channels', async () => {
+    const { writeDesktopChannel } = await import('../desktop/channels.js');
+    writeDesktopChannel(null);
+    return { ok: true };
+  });
 
   // Google: set API key
   app.put<{ Body: { apiKey: string } }>('/v1/providers/google', async (request, reply) => {

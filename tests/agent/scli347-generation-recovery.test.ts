@@ -358,6 +358,11 @@ describe('SCLI-347 fenced-generation expensive-turn recovery', () => {
     await agent.processMessage(current);
 
     expect(executions).toBe(1);
+    // The 5th arg is the measured duration (Date.now() - startedAt in
+    // agent-process.ts). Asserting exactly 0 was a latent flake: scheduler
+    // jitter on contended nodes measured 1 ms (full-suite run 7113). The
+    // invariant under test is exactly-once execution (line above) plus the
+    // audit call carrying A duration — not its value.
     expect(agent.auditLogger.logAfter).toHaveBeenCalledWith(
       'audit-current-message',
       'jun-s347',

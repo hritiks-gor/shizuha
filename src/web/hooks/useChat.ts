@@ -14,6 +14,7 @@ import {
   resolveAssistantTurnId,
   upsertAssistantMessage,
 } from '../lib/chat-sync';
+import { chatWebSocketUrl } from '../lib/backend';
 import { ConnectBridge } from '../lib/connect-bridge';
 import { loadCachedMessages, saveCachedMessages } from '../lib/connect-cache';
 
@@ -496,8 +497,7 @@ export function useChat(options: UseChatOptions = {}) {
         activeSocket = null;
       }
 
-      const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const wsUrl = `${proto}//${window.location.host}/ws/chat?_t=${Date.now()}`;
+      const wsUrl = chatWebSocketUrl();
       const ws = new WebSocket(wsUrl);
       activeSocket = ws;
       wsRef.current = ws;

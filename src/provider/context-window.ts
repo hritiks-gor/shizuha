@@ -56,6 +56,11 @@ const MODEL_CONTEXT_WINDOW_DEFAULTS: Record<string, number> = {
   'gpt-5.3-codex-spark': 272000,
   'gpt-5.5': 272000,
   'gpt-5.6-sol': 272000,
+  // Codex 0.157.1 bundled catalog: context_window 272000, max_context_window 872000.
+  // api.openai.com documents 1,050,000; chatgpt.com/backend-api/codex clamps at the catalog max.
+  'gpt-6-astra': 872000,
+  'gpt-6-sol': 872000,
+  'gpt-6-luna': 872000,
   'codex-mini-latest': 192000,
   'o3-mini': 200000,
   'o4-mini': 200000,
@@ -91,11 +96,20 @@ const MODEL_CONTEXT_WINDOW_DEFAULTS: Record<string, number> = {
   'mistral-small-latest': 128000,
   'codestral-latest': 256000,
 
-  // xAI
+  // xAI. grok-4.7/4.6/4.5 match the provider map (docs.x.ai, 500k). grok-4 is 256k.
+  'grok-4.7': 500000,
+  'grok-4.6': 500000,
+  'grok-4.5': 500000,
+  'grok-4': 256000,
   'grok-2': 131072,
   'grok-3': 131072,
   'grok-3-mini': 131072,
 };
+
+/** Codex CLI catalog max_context_window for gpt-6-astra, gpt-6-sol, and gpt-6-luna. */
+export const GPT6_CATALOG_MAX_CONTEXT_WINDOW = 872000;
+
+const GPT6_CATALOG_SLUGS = new Set(['gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna']);
 
 /** Last-resort context window when neither the provider nor the defaults table knows the model. */
 const GENERIC_CONTEXT_WINDOW_DEFAULT = 128000;
@@ -130,6 +144,11 @@ export function bareModelIdForContextLookup(model: string): string {
     .trim();
 }
 
+/** True for the three gpt-6 slugs whose Codex catalog max is 872k, not the 272k bundled default. */
+export function isGpt6CatalogModel(model: string | undefined | null): boolean {
+  return GPT6_CATALOG_SLUGS.has(bareModelIdForContextLookup(model ?? '').toLowerCase());
+}
+
 function lookupDefaultContextWindow(model: string): number | undefined {
   if (!model) return undefined;
   if (MODEL_CONTEXT_WINDOW_DEFAULTS[model] != null) return MODEL_CONTEXT_WINDOW_DEFAULTS[model];
@@ -137,6 +156,9 @@ function lookupDefaultContextWindow(model: string): number | undefined {
   if (bare && MODEL_CONTEXT_WINDOW_DEFAULTS[bare] != null) return MODEL_CONTEXT_WINDOW_DEFAULTS[bare];
   // Family fallback: any gpt-5.x / *-codex* id we have not enumerated yet.
   if (/^gpt-5(\.\d+)?(-|$)/i.test(bare) || /codex/i.test(bare)) return 272000;
+  if (isGpt6CatalogModel(bare)) return GPT6_CATALOG_MAX_CONTEXT_WINDOW;
+  if (/^grok-4\.(?:5|6|7)(?:-|$)/i.test(bare)) return 500000;
+  if (/^grok-4(?:-|$)/i.test(bare)) return 256000;
   return undefined;
 }
 
@@ -182,6 +204,11 @@ export function resolveEffectiveContextWindow(
   // we plan against 262k while the backend rejects at 98k). Operator 2026-07-24.
   const GENERIC_PROVIDER_FLOOR = 131072;
   const STALE_CODEX_CATALOG_WINDOW = 200000;
+  // CodexProvider's constructor default. Lift it only when the provider has no
+  // per-model contextWindowFor and the model default is higher (gpt-6 catalog
+  // max). An honest contextWindowFor that returns 272000 stays 272000, and a
+  // served 272000 is not rewritten here.
+  const BUNDLED_CODEX_DEFAULT_WINDOW = 272000;
   const maxCtx = (
     source
     && typeof source === 'object'
@@ -200,10 +227,23 @@ export function resolveEffectiveContextWindow(
     && typeof defaultWindow === 'number'
     && defaultWindow >= 272000
   );
+  const contextWindowForPresent = (
+    !!source
+    && typeof source === 'object'
+    && typeof source.contextWindowFor === 'function'
+  );
+  const looksLikeBundledCodexDefault = (
+    !contextWindowForPresent
+    && typeof providerWindow === 'number'
+    && providerWindow === BUNDLED_CODEX_DEFAULT_WINDOW
+    && typeof defaultWindow === 'number'
+    && defaultWindow > BUNDLED_CODEX_DEFAULT_WINDOW
+    && (maxCtx == null || maxCtx === BUNDLED_CODEX_DEFAULT_WINDOW)
+  );
   if (
     typeof defaultWindow === 'number'
     && defaultWindow > (providerWindow ?? 0)
-    && (looksLikeGenericFloor || looksLikeStaleCodexCatalog)
+    && (looksLikeGenericFloor || looksLikeStaleCodexCatalog || looksLikeBundledCodexDefault)
   ) {
     effectiveProvider = defaultWindow;
   }

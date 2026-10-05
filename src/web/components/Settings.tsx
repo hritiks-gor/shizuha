@@ -70,7 +70,7 @@ interface SettingsData {
   };
 }
 
-type Section = 'profile' | 'agents' | 'connection' | 'fan-out' | 'providers' | 'runtime';
+type Section = 'profile' | 'agents' | 'connection' | 'fan-out' | 'providers' | 'channels' | 'runtime';
 
 interface SettingsProps {
   isOpen: boolean;
@@ -84,6 +84,7 @@ const SECTIONS: Array<{ id: Section; label: string; icon: string }> = [
   { id: 'connection', label: 'Connection', icon: 'M13.19 8.688a4.5 4.5 0 0 1 1.242 7.244l-4.5 4.5a4.5 4.5 0 0 1-6.364-6.364l1.757-1.757m13.35-.622 1.757-1.757a4.5 4.5 0 0 0-6.364-6.364l-4.5 4.5a4.5 4.5 0 0 0 1.242 7.244' },
   { id: 'fan-out', label: 'Fan-out', icon: 'M7.217 10.907a2.25 2.25 0 1 0 0 2.186m0-2.186c.18.324.283.696.283 1.093s-.103.77-.283 1.093m0-2.186 9.566-5.314m-9.566 7.5 9.566 5.314m0 0a2.25 2.25 0 1 0 3.935 2.186 2.25 2.25 0 0 0-3.935-2.186Zm0-12.814a2.25 2.25 0 1 0 3.933-2.185 2.25 2.25 0 0 0-3.933 2.185Z' },
   { id: 'providers', label: 'Providers', icon: 'M15.75 5.25a3 3 0 0 1 3 3m3 0a6 6 0 0 1-7.029 5.912c-.563-.097-1.159.026-1.563.43L10.5 17.25H8.25v2.25H6v2.25H2.25v-2.818c0-.597.237-1.17.659-1.591l6.499-6.499c.404-.404.527-1 .43-1.563A6 6 0 1 1 21.75 8.25Z' },
+  { id: 'channels', label: 'Channels', icon: 'M8.625 12a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm0 0H8.25m4.125 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm0 0H12m4.125 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm0 0h-.375M21 12c0 4.556-4.03 8.25-9 8.25a9.764 9.764 0 0 1-2.555-.337A5.972 5.972 0 0 1 5.41 20.97a5.969 5.969 0 0 1-.474-.065 4.48 4.48 0 0 0 .978-2.025c.09-.457-.133-.901-.467-1.226C3.93 16.178 3 14.189 3 12c0-4.556 4.03-8.25 9-8.25s9 3.694 9 8.25Z' },
   { id: 'runtime', label: 'Runtime', icon: 'M11.42 15.17 17.25 21A2.652 2.652 0 0 0 21 17.25l-5.877-5.877M11.42 15.17l2.496-3.03c.317-.384.74-.626 1.208-.766M11.42 15.17l-4.655 5.653a2.548 2.548 0 1 1-3.586-3.586l6.837-5.63m5.108-.233c.55-.164 1.163-.188 1.743-.14a4.5 4.5 0 0 0 4.486-6.336l-3.276 3.277a3.004 3.004 0 0 1-2.25-2.25l3.276-3.276a4.5 4.5 0 0 0-6.336 4.486c.048.58.024 1.194-.14 1.743' },
 ];
 
@@ -178,6 +179,7 @@ export function Settings({ isOpen, onClose, onLogout }: SettingsProps) {
               {activeSection === 'connection' && <ConnectionSection data={data} />}
               {activeSection === 'fan-out' && <FanOutSection />}
               {activeSection === 'providers' && <ProvidersSection data={data} onRefresh={fetchSettings} />}
+              {activeSection === 'channels' && <ChannelsSection data={data} />}
               {activeSection === 'runtime' && <RuntimeSection data={data} onRefresh={fetchSettings} />}
             </div>
           ) : (
@@ -859,6 +861,8 @@ function AgentsSection({ data, onRefresh }: { data: SettingsData; onRefresh: () 
   const [editValue, setEditValue] = useState('');
   const [saving, setSaving] = useState<string | null>(null);
   const [editError, setEditError] = useState<string | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<{ id: string; message: string } | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [creating, setCreating] = useState(false);
   const [deleting, setDeleting] = useState<string | null>(null);
@@ -973,17 +977,30 @@ function AgentsSection({ data, onRefresh }: { data: SettingsData; onRefresh: () 
   const handleDelete = async (agentId: string) => {
     setDeleting(agentId);
     setEditError(null);
+    setDeleteError(null);
     try {
       const res = await fetch(`/v1/agents/${agentId}`, { method: 'DELETE' });
       if (!res.ok) {
-        const err = await res.json().catch(() => ({ error: 'Failed to delete agent' }));
-        setEditError((err as { error: string }).error);
+        const text = await res.text();
+        let message = `Delete failed (${res.status})`;
+        try {
+          const err = JSON.parse(text) as { error?: string };
+          if (err.error) message = err.error;
+        } catch {
+          const trimmed = text.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+          if (trimmed) message = trimmed.slice(0, 280);
+        }
+        setDeleteError({ id: agentId, message });
+        setEditError(message);
       } else {
+        setConfirmDeleteId(null);
         setExpandedAgent(null);
         onRefresh();
       }
-    } catch {
-      setEditError('Network error');
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Network error';
+      setDeleteError({ id: agentId, message });
+      setEditError(message);
     } finally {
       setDeleting(null);
     }
@@ -1615,19 +1632,44 @@ function AgentsSection({ data, onRefresh }: { data: SettingsData; onRefresh: () 
                     </div>
                   )}
 
-                  {/* Delete */}
-                  <div className="pt-2 border-t border-zinc-800">
-                    <button
-                      onClick={() => {
-                        if (confirm(`Delete agent "${agent.name}"? This cannot be undone.`)) {
-                          handleDelete(agent.id);
-                        }
-                      }}
-                      disabled={deleting === agent.id}
-                      className="text-[11px] text-red-400 hover:text-red-300 transition-colors cursor-pointer disabled:opacity-50"
-                    >
-                      {deleting === agent.id ? 'Deleting...' : 'Delete this agent'}
-                    </button>
+                  {/* Delete. No window.confirm: the desktop webview does not show it, so the click looked like a no-op. */}
+                  <div className="pt-2 border-t border-zinc-800 space-y-2">
+                    {confirmDeleteId === agent.id ? (
+                      <div className="rounded-lg border border-red-900/40 bg-red-950/30 px-3 py-2 space-y-2">
+                        <p className="text-xs text-red-200">Delete {agent.name}? This cannot be undone.</p>
+                        <div className="flex gap-2">
+                          <button
+                            type="button"
+                            onClick={() => void handleDelete(agent.id)}
+                            disabled={deleting === agent.id}
+                            className="px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-500 text-white text-xs font-medium cursor-pointer disabled:opacity-50"
+                          >
+                            {deleting === agent.id ? 'Deleting...' : 'Delete'}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => { setConfirmDeleteId(null); setDeleteError(null); }}
+                            disabled={deleting === agent.id}
+                            className="px-3 py-1.5 rounded-lg bg-zinc-800 text-zinc-300 text-xs cursor-pointer"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => { setDeleteError(null); setConfirmDeleteId(agent.id); }}
+                        className="text-[11px] text-red-400 hover:text-red-300 transition-colors cursor-pointer"
+                      >
+                        Delete this agent
+                      </button>
+                    )}
+                    {deleteError?.id === agent.id && (
+                      <p className="text-xs text-red-300 bg-red-950/40 border border-red-900/40 rounded-lg px-3 py-2" role="alert">
+                        {deleteError.message}
+                      </p>
+                    )}
                   </div>
                 </div>
               )}
@@ -2513,6 +2555,83 @@ function CortexTrialCard({ loggedIn }: { loggedIn: boolean }) {
         </p>
       )}
       <p className="text-[10px] text-zinc-600 font-mono break-all">{models}</p>
+    </div>
+  );
+}
+
+function ChannelsSection({ data }: { data: SettingsData }) {
+  const [kind, setKind] = useState<'telegram' | 'discord'>('telegram');
+  const [token, setToken] = useState('');
+  const [agentUsername, setAgentUsername] = useState(data.agents[0]?.username ?? '');
+  const [allow, setAllow] = useState('');
+  const [status, setStatus] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    void fetch('/v1/desktop/channels').then(async (res) => {
+      if (!res.ok) return;
+      const view = await res.json() as { configured?: boolean; kind?: 'telegram' | 'discord'; agentUsername?: string; allow?: string };
+      if (view.kind) setKind(view.kind);
+      if (view.agentUsername) setAgentUsername(view.agentUsername);
+      if (view.allow) setAllow(view.allow);
+      if (view.configured) setStatus('A bot is saved. The matching agent attaches it without a Shizuha ID.');
+    }).catch(() => {});
+  }, []);
+
+  const save = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch('/v1/desktop/channels', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kind, token, agentUsername, allow }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(typeof body.error === 'string' ? body.error : 'Could not save the bot');
+        return;
+      }
+      setToken('');
+      setStatus('Saved. Messages from that bot show up in this agent’s desktop transcript.');
+    } catch {
+      setError('The local core did not accept the bot');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="space-y-4 max-w-lg">
+      <div>
+        <h3 className="text-sm font-medium text-zinc-100">Channels</h3>
+        <p className="text-[11px] text-zinc-500 mt-1">Attach your own Telegram or Discord bot to one local agent. No Shizuha ID.</p>
+      </div>
+      <label className="block text-xs text-zinc-400">Bot
+        <select className="sd-field mt-1 px-3 py-2 text-sm" value={kind} onChange={(e) => setKind(e.target.value as 'telegram' | 'discord')}>
+          <option value="telegram">Telegram</option>
+          <option value="discord">Discord</option>
+        </select>
+      </label>
+      <label className="block text-xs text-zinc-400">Agent
+        <select className="sd-field mt-1 px-3 py-2 text-sm" value={agentUsername} onChange={(e) => setAgentUsername(e.target.value)}>
+          {data.agents.map((agent) => (
+            <option key={agent.id} value={agent.username}>{agent.name} (@{agent.username})</option>
+          ))}
+        </select>
+      </label>
+      <label className="block text-xs text-zinc-400">Bot token
+        <input className="sd-field mt-1 px-3 py-2 text-sm" type="password" value={token} onChange={(e) => setToken(e.target.value)} placeholder="Paste the bot token" />
+      </label>
+      <label className="block text-xs text-zinc-400">Allowed chat or guild ids
+        <input className="sd-field mt-1 px-3 py-2 text-sm" value={allow} onChange={(e) => setAllow(e.target.value)} placeholder="Optional, comma-separated" />
+      </label>
+      {error && <p className="text-sm text-red-400">{error}</p>}
+      {status && <p className="text-sm text-cyan-200">{status}</p>}
+      <button type="button" disabled={busy || token.trim().length < 10 || !agentUsername} onClick={() => void save()} className="h-10 px-4 rounded-xl bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 text-white text-sm cursor-pointer">
+        {busy ? 'Saving…' : 'Attach bot'}
+      </button>
     </div>
   );
 }

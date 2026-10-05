@@ -1,6 +1,8 @@
 import { useRef, useState, useEffect, useCallback, useImperativeHandle, forwardRef } from 'react';
 import { MessageBubble } from './MessageBubble';
 import { StreamingMessage } from './StreamingMessage';
+import { LocalModelCard } from './LocalModelCard';
+import { useShortWindow } from '../lib/short-window';
 import type { ChatMessage } from '../lib/types';
 
 interface ChatViewProps {
@@ -10,6 +12,8 @@ interface ChatViewProps {
   activeTools: string[];
   reasoningSummaries: string[];
   highlightMessageId?: string | null;
+  onLocalModel?: (modelId: string) => void;
+  agentId?: string;
 }
 
 export interface ChatViewHandle {
@@ -23,6 +27,8 @@ export const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatV
   activeTools,
   reasoningSummaries,
   highlightMessageId,
+  onLocalModel,
+  agentId,
 }, ref) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const isAutoScrollRef = useRef(true);
@@ -40,12 +46,20 @@ export const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatV
 
   useImperativeHandle(ref, () => ({ scrollToMessage }), [scrollToMessage]);
 
-  // Auto-scroll to bottom on new content
+  // Follow the transcript. An empty welcome is a form: jumping to the
+  // bottom hides the title above a short window.
   useEffect(() => {
-    if (isAutoScrollRef.current && scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    const el = scrollRef.current;
+    if (!el) return;
+    if (messages.length === 0 && !isStreaming) {
+      el.scrollTop = 0;
+      isAutoScrollRef.current = true;
+      return;
     }
-  }, [messages, streamingContent, activeTools, reasoningSummaries]);
+    if (isAutoScrollRef.current) {
+      el.scrollTop = el.scrollHeight;
+    }
+  }, [messages, streamingContent, activeTools, reasoningSummaries, isStreaming]);
 
   // Detect manual scroll — show "scroll to bottom" button when scrolled up
   const handleScroll = () => {
@@ -66,16 +80,17 @@ export const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatV
   }, []);
 
   const isEmpty = messages.length === 0 && !isStreaming;
+  const short = useShortWindow();
 
   return (
-    <div className="relative flex-1 min-h-0">
+    <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
       <div
         ref={scrollRef}
         onScroll={handleScroll}
-        className="h-full overflow-y-auto px-2 sm:px-4 py-4"
+        className={`min-h-0 flex-1 overflow-y-auto px-2 sm:px-4 ${short ? 'py-1' : 'py-4'}`}
       >
-        <div className="max-w-4xl mx-auto">
-          {isEmpty && <WelcomeScreen />}
+        <div className={`mx-auto max-w-4xl ${isEmpty ? 'flex min-h-full flex-col justify-center' : ''}`}>
+          {isEmpty && <WelcomeScreen onLocalModel={onLocalModel} agentId={agentId} />}
 
           {messages.map((msg) => (
             <div key={msg.id} id={`msg-${msg.id}`} className={`rounded-lg transition-all duration-300 ${highlightMessageId === msg.id ? 'ring-1 ring-shizuha-500/50' : ''}`}>
@@ -109,17 +124,23 @@ export const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatV
   );
 });
 
-function WelcomeScreen() {
+function WelcomeScreen({ onLocalModel, agentId }: { onLocalModel?: (modelId: string) => void; agentId?: string }) {
+  const short = useShortWindow();
   return (
-    <div className="flex flex-col items-center justify-center h-full min-h-[400px] text-center">
-      <div className="mb-6">
-        <div className="w-16 h-16 rounded-2xl bg-shizuha-600/20 flex items-center justify-center mb-4 mx-auto">
-          <span className="text-3xl">❖</span>
+    <div className={`flex w-full flex-col items-center text-center ${short ? 'px-3 pb-1 pt-1' : 'px-4 pb-8 pt-6'}`}>
+      <h1
+        data-testid="desktop-hero"
+        className={`font-light tracking-tight ${short ? 'text-2xl leading-tight' : 'text-4xl sm:text-5xl'}`}
+      >
+        <span className="text-indigo-400/70">静葉</span>{' '}
+        <span className="font-medium text-zinc-100">Shizuha</span>
+      </h1>
+      <p className={`text-zinc-400 ${short ? 'mt-0.5 text-xs' : 'mt-3 text-lg'}`}>Talk to your agent</p>
+      {onLocalModel && (
+        <div className={`w-full max-w-md ${short ? 'mt-2' : 'mt-6'}`}>
+          <LocalModelCard onSaved={onLocalModel} agentId={agentId} />
         </div>
-        <h1 className="text-xl font-semibold text-zinc-200">Shizuha</h1>
-        <p className="text-sm text-zinc-500 mt-1">Interactive Coding Agent</p>
-      </div>
-
+      )}
     </div>
   );
 }

@@ -16,8 +16,9 @@ import {
   type BrokerModelToken,
 } from './broker-token.js';
 
-export const HIVE_XAI_GROK_MODEL = 'xai:grok-4.6';
-export const HIVE_XAI_UPSTREAM_MODEL = 'grok-4.6';
+export const HIVE_XAI_GROK_MODEL = 'xai:grok-4.7';
+export const HIVE_XAI_UPSTREAM_MODEL = 'grok-4.7';
+const DEPRECATED_GROK_UPSTREAMS = new Set(['grok-4.6', 'grok-4.6-latest']);
 
 export interface BrokerXaiAuthPayload {
   accessToken: string;
@@ -28,7 +29,10 @@ export interface BrokerXaiAuthPayload {
 export function hiveDirectXaiUpstreamModel(model: string): string {
   const lower = String(model || '').trim().toLowerCase();
   const bare = lower.startsWith('xai:') ? lower.slice(4) : lower;
-  if (bare.startsWith('grok-')) return bare;
+  if (bare.startsWith('grok-')) {
+    if (DEPRECATED_GROK_UPSTREAMS.has(bare)) return HIVE_XAI_UPSTREAM_MODEL;
+    return bare;
+  }
   return HIVE_XAI_UPSTREAM_MODEL;
 }
 

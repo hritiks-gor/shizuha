@@ -81,6 +81,23 @@ describe('StateStore.listSessions', () => {
     expect(sessions[0]!.turnCount).toBe(2);
   });
 
+  it('records reported cache reads without rewriting gross input or inventing a zero', () => {
+    const s = store.createSession('gpt-6-astra', '/tmp');
+    store.updateTokens(s.id, 100, 10);
+    expect(store.loadSession(s.id)?.totalCacheReadTokens).toBe(0);
+    expect(store.loadSession(s.id)?.totalInputTokens).toBe(100);
+
+    store.updateTokens(s.id, 80, 5, 0);
+    store.updateTokens(s.id, 200, 20, 150);
+    store.updateTokens(s.id, 40, 4);
+
+    const loaded = store.loadSession(s.id);
+    expect(loaded?.totalInputTokens).toBe(420);
+    expect(loaded?.totalCacheReadTokens).toBe(150);
+    expect(loaded?.turnCount).toBe(4);
+    expect(store.listSessions()[0]?.totalCacheReadTokens).toBe(150);
+  });
+
   it('restores token anchors only for an unchanged append-only message prefix', () => {
     const s = store.createSession('test-model', '/tmp');
     const baseline = [

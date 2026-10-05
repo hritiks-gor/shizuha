@@ -52,6 +52,8 @@ export interface BrokerModelTokenFetchOptions {
   excludeEntryId?: string;
   /** Stable caller identity used by Hive's per-agent token-pool pinning. */
   stickyKey?: string;
+  /** Model the lease must be able to serve. Hive uses it to skip incapable plans. */
+  model?: string;
 }
 
 /**
@@ -151,6 +153,7 @@ export function fetchBrokerModelToken(
   if (options.preferredEntryId) query.set('preferred_entry_id', options.preferredEntryId);
   if (options.excludeEntryId) query.set('exclude_entry_id', options.excludeEntryId);
   if (options.stickyKey) query.set('sticky_key', options.stickyKey);
+  if (options.model) query.set('model', options.model);
   return new Promise((resolve) => {
     const req = http.request(
       {

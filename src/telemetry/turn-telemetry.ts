@@ -32,6 +32,9 @@ export interface TurnTelemetryRecord {
   filesEdited: number;
   inputTokens: number;
   outputTokens: number;
+  /** Present only when the provider reported a cache counter. 0 is a measured miss. */
+  cacheReadInputTokens?: number;
+  cacheCreationInputTokens?: number;
   ttftMs: number | null;
   decodeTokensPerSec: number | null;
   timeOnTurnMs: number;
@@ -107,6 +110,8 @@ export class TurnAccumulator {
     model: string;
     inputTokens: number;
     outputTokens: number;
+    cacheReadInputTokens?: number;
+    cacheCreationInputTokens?: number;
     timeOnTurnMs: number;
     promptTokenEstimate?: number;
     systemOverheadTokens?: number;
@@ -136,6 +141,8 @@ export class TurnAccumulator {
       filesEdited: this.filesEdited,
       inputTokens: meta.inputTokens,
       outputTokens: meta.outputTokens,
+      ...(typeof meta.cacheReadInputTokens === 'number' ? { cacheReadInputTokens: meta.cacheReadInputTokens } : {}),
+      ...(typeof meta.cacheCreationInputTokens === 'number' ? { cacheCreationInputTokens: meta.cacheCreationInputTokens } : {}),
       ttftMs: this.ttftMs,
       decodeTokensPerSec: this.decodeTokensPerSec,
       timeOnTurnMs: meta.timeOnTurnMs,
@@ -173,6 +180,8 @@ export function recordTurnTelemetry(args: {
     decodeTokensPerSec?: number | null;
     inputTokens: number;
     outputTokens: number;
+    cacheReadInputTokens?: number;
+    cacheCreationInputTokens?: number;
   };
   providerName: string;
   runId: string;
@@ -212,6 +221,8 @@ export function recordTurnTelemetry(args: {
     model: args.model,
     inputTokens: result.inputTokens,
     outputTokens: result.outputTokens,
+    ...(typeof result.cacheReadInputTokens === 'number' ? { cacheReadInputTokens: result.cacheReadInputTokens } : {}),
+    ...(typeof result.cacheCreationInputTokens === 'number' ? { cacheCreationInputTokens: result.cacheCreationInputTokens } : {}),
     timeOnTurnMs: args.turnDurationMs,
     ...(args.promptBudget ?? {}),
     ...(args.compactionAction ? { compactionAction: args.compactionAction } : {}),

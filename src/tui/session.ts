@@ -41,7 +41,6 @@ import { StruggleAnalyzer } from '../agent/struggle-analyzer.js';
 import { setupStrugglePulseAutoFiler } from '../telemetry/struggle-auto-filer.js';
 import {
   hasVisibleAssistantText,
-  isProgressOnlyAssistantText,
   reasoningTextFromContent,
   visibleTextFromContent,
 } from '../agent/content.js';
@@ -2000,6 +1999,17 @@ export class AgentSession extends EventEmitter {
               hint = ' — Spark/Codex is slow on large contexts; try /model DeepSeek-V4-Flash or Esc + /clear';
             }
             const stall = noteStallRetry();
+            // SCLI-522 leg 4: the retry line must be bounded, not "indefinite".
+            // maxAttempts is the same finite cap the SCLI-388 bound enforces
+            // above; on the final allowed attempt the hint names the
+            // escalation — the next stall ends the turn idle with the
+            // provider/model timeout diagnosis naming /model (healthy
+            // fallback), so the affordance is visible BEFORE the idle end.
+            const stallCap = Math.max(1, MAX_FIRST_TOKEN_STALL_RETRIES);
+            const isFinalStallAttempt = isFirstTokenStall && stall.attempt + 1 >= stallCap;
+            if (isFinalStallAttempt && !hint) {
+              hint = ' — next stall ends the turn idle with a provider/model timeout diagnosis; try /model <reachable-id>';
+            }
             this.emit('agent_event', {
               type: 'error',
               error: formatRetryNotice({
@@ -2010,6 +2020,7 @@ export class AgentSession extends EventEmitter {
                 attempt: stall.attempt,
                 elapsedMs: stall.elapsedMs,
                 delayMs: jitter,
+                maxAttempts: isFirstTokenStall ? stallCap : undefined,
                 hint,
               }),
               timestamp: Date.now(),
@@ -2156,7 +2167,7 @@ export class AgentSession extends EventEmitter {
         // Track actual API input tokens for accurate context usage display.
         // This is the real count from Anthropic's tokenizer (system + tools + messages).
         this._turnCount++;
-        this.store.updateTokens(this.sessionId, result.inputTokens, result.outputTokens);
+        this.store.updateTokens(this.sessionId, result.inputTokens, result.outputTokens, result.cacheReadInputTokens);
 
         // SCLI-32: capture this turn into the run-telemetry window, then run the
         // window-driven heuristics (review P2-4). Best-effort; never breaks a turn.
@@ -2449,26 +2460,6 @@ export class AgentSession extends EventEmitter {
             this.emit('agent_event', {
               type: 'error',
               error: emptyResponseMessage,
-              timestamp: Date.now(),
-            });
-          }
-
-          if (hasActionableText && this._mode !== 'plan' && isProgressOnlyAssistantText(strippedCheck)) {
-            if (progressOnlyRecoveryCount < MAX_PROGRESS_ONLY_RECOVERY) {
-              progressOnlyRecoveryCount++;
-              logger.warn(
-                { turnIndex, attempt: progressOnlyRecoveryCount, text: strippedCheck.slice(0, 240) },
-                'TUI: progress-only narration without tool call — continuing from prefix (no user lecture)',
-              );
-              continue;
-            }
-
-            const progressOnlyMessage = `Model stopped after progress-only narration without calling a tool after ${progressOnlyRecoveryCount} recovery attempts. The turn is incomplete; resume after checking logs or switch models.`;
-            hadError = true;
-            lastFailureMessage = progressOnlyMessage;
-            this.emit('agent_event', {
-              type: 'error',
-              error: progressOnlyMessage,
               timestamp: Date.now(),
             });
           }

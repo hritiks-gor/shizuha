@@ -20,6 +20,7 @@ import {
   type ToolRetryConfig,
 } from './tool-retry.js';
 import { getModelProfile } from '../provider/model-profile.js';
+import { dispatchToolName } from '../provider/vllm.js';
 import { PrefixFingerprintTracker, computePrefixFingerprint } from '../telemetry/prefix-fingerprint.js';
 import { buildProviderPrefixSnapshot, type ProviderPrefixContinuity, type ProviderPrefixSnapshot } from '../telemetry/provider-prefix-continuity.js';
 import { detectOutputDegeneracy, detectScriptCollapse, formatDegeneracyStopNotice, messagesHaveRecentToolWork } from './output-degeneracy-guard.js';
@@ -696,9 +697,10 @@ export async function executeTurn(
 
         case 'tool_use_end': {
           const pending = pendingToolInputs.get(chunk.id);
+          const rawName = pending?.name ?? '';
           const tc: ToolCall = {
             id: chunk.id,
-            name: pending?.name ?? '',
+            name: dispatchToolName(rawName, toolRegistry.list().map((tool) => tool.name)),
             input: paramCoercion ? paramCoercion(chunk.input) : chunk.input,
           };
           toolCalls.push(tc);

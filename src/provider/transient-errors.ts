@@ -159,6 +159,15 @@ export function formatStallDuration(ms: number): string {
  * not the per-sub-turn retry index. The agentic loop starts a fresh retry
  * counter for each `executeTurn`, so the old per-loop counter reset to
  * "attempt 1" every few minutes and made a long outage look seconds old.
+ *
+ * SCLI-522 leg 4 (kei verdict 2026-09-16): the render must never claim the
+ * retry is indefinite. Pass ``maxAttempts`` (the finite cap — the TUI's
+ * ``FIRST_TOKEN_STALL_RETRIES`` semantics) to render ``attempt N/cap``;
+ * without a cap the line renders ``attempt N`` and stays quiet about any
+ * policy. The literal "indefinite" is gone from the template: the TUI's
+ * stall path is bounded (SCLI-388 — the next stall ends the turn idle with
+ * the provider/model timeout diagnosis naming /model), and the line must
+ * say so, not lie by omission.
  */
 export function formatRetryNotice(input: {
   label: string;
@@ -168,14 +177,18 @@ export function formatRetryNotice(input: {
   attempt: number;
   elapsedMs: number;
   delayMs: number;
+  maxAttempts?: number;
   hint?: string;
 }): string {
   const id = input.code || input.status || 'retryable';
   const reason = summarizeFailureReason(input.message);
   const stalled = input.elapsedMs > 0 ? `, stalled ${formatStallDuration(input.elapsedMs)}` : '';
+  const attemptClause = Number.isFinite(input.maxAttempts) && (input.maxAttempts as number) > 0
+    ? `attempt ${input.attempt}/${input.maxAttempts}`
+    : `attempt ${input.attempt}`;
   return `${input.label} (${id})${reason ? `: ${reason}` : ''}`
     + ` — retrying in ${Math.max(1, Math.round(input.delayMs / 1000))}s`
-    + ` (attempt ${input.attempt}${stalled}, indefinite)${input.hint ?? ''}`;
+    + ` (${attemptClause}${stalled})${input.hint ?? ''}`;
 }
 
 /**
@@ -259,6 +272,15 @@ export function isTransientProviderFailure(input: {
     return false;
   }
 
+  // ChatGPT 400: function.parameters failed JSON Schema (ToolSearch
+  // exclusiveMinimum:true). Retrying resends the same tools.
+  if (
+    code === 'invalid_function_parameters'
+    || /invalid schema for function/i.test(blob)
+  ) {
+    return false;
+  }
+
   // Cortex/vLLM 400: the prompt itself has more images than the model allows.
   // "Cortex stream error:" is the wrapper, not a dropped stream. Retrying
   // sends the same images again (shizuha2, GLM limit 4, 2026-09-23).
@@ -267,6 +289,13 @@ export function isTransientProviderFailure(input: {
     || /parameter=image/i.test(blob)
     || (input.status === 400 && /image\(s\) may be provided/i.test(blob))
   ) {
+    return false;
+  }
+
+  // Cortex/vLLM 400: the chat list we sent ends in two assistant messages.
+  // "Cortex stream error:" is the wrapper, not a dropped stream. Retrying
+  // sends the same list (shizuha1, Qwen3.8-27B, 2026-09-27).
+  if (/2 or more assistant messages|assistant messages at the end of the list/i.test(blob)) {
     return false;
   }
 

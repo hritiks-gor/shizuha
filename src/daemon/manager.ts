@@ -78,9 +78,10 @@ import * as path from 'node:path';
 import Database from 'better-sqlite3';
 import { repairBareMetalRuntimeWorkspace } from './workspace-writable-repair.js';
 import { logger } from '../utils/logger.js';
-import { discoverClaudeTokens, getActiveClaudeToken, probeStaleClaudeCooldowns, readCodexAccounts } from '../config/credentials.js';
+import { discoverClaudeTokens, getActiveClaudeToken, probeStaleClaudeCooldowns, readCodexAccounts, readCredentials } from '../config/credentials.js';
 import { readProviderConfigValue } from '../config/provider-env.js';
 import { isCortexModelId } from '../provider/registry.js';
+import { isGrokVoiceOmniModel } from '../provider/grok-voice.js';
 import { buildBridgeIdentityPrompt } from '../prompt/bridge-identity.js';
 import { agentEffectiveCapabilityEnv, applyEffectiveCapabilitiesToAgent, summarizeEffectiveCapabilities } from '../platform/effective-capabilities.js';
 import { loadOrCreateAgentKeypair } from '../crypto/identity.js';
@@ -168,6 +169,7 @@ import type {
   DaemonState,
   DaemonAgentState,
 } from './types.js';
+import { desktopFirstRunAgents } from './desktop-seed.js';
 import { revokeAgentGatewayTokens } from './agent-auth.js';
 import { readAgentCredential } from '../auth/credential-resolver.js';
 import { seedHeartbeatTemplate } from './heartbeat-template.js';
@@ -376,6 +378,22 @@ function resolveDockerPath(): string {
 
 function getAgentWorkspaceDir(agent: AgentInfo): string {
   return path.join(process.env['HOME'] ?? '~', '.shizuha', 'workspaces', agent.username);
+}
+
+/** Gateway context is multi-line skill text. Pass a file, not --context-prompt. */
+export function gatewayContextPromptArgs(opts: {
+  combined: string;
+  workspaceDir: string;
+  bareMetal: boolean;
+  writeFile?: (file: string, content: string) => void;
+}): string[] {
+  const hostPath = path.join(opts.workspaceDir, '.bridge-context-prompt');
+  const write = opts.writeFile ?? ((file: string, content: string) => {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, content, { mode: 0o600 });
+  });
+  write(hostPath, opts.combined);
+  return ['--context-prompt-file', opts.bareMetal ? hostPath : '/workspace/.bridge-context-prompt'];
 }
 
 const DEFAULT_CONTAINER_AGENT_UID = 1000;
@@ -632,6 +650,7 @@ function preparePrivateDockerEnv(shizuhaHome: string, agentUsername: string, env
  */
 export const VALID_CODEX_MODELS = new Set<string>([
   'gpt-5.5',
+  'gpt-6-astra',
   'gpt-5.6-sol',
   // gpt-5.6-luna / gpt-5.6-terra: operator-verified functional 2026-07-12
   // (sibling flagship variants used to spread the fleet across ChatGPT-backend
@@ -837,9 +856,9 @@ function defaultModelForExecutionMethod(method: string): string {
   if (method === 'codex_app_server') return 'gpt-5.5';
   if (method === 'openclaw_bridge') return 'gpt-5.5';
   if (method === 'antigravity_server' || method === 'gemini_cli_server') return 'gemini-3.6-flash-high';
-  // Grok Build / shizuha default is Cortex SuperGrok 4.6.
-  if (method === 'grok_build') return 'cortex/grok-4.6';
-  if (method === 'shizuha') return 'cortex/grok-4.6';
+  // Grok Build / shizuha default is Cortex SuperGrok 4.7.
+  if (method === 'grok_build') return 'cortex/grok-4.7';
+  if (method === 'shizuha') return 'cortex/grok-4.7';
   return 'gpt-5.5';
 }
 
@@ -1153,7 +1172,11 @@ function inferProviderBaseUrl(envName: string, providerName: string, agentId?: s
 function resolveAgentRuntimeEnv(agent: AgentInfo, runtime: NormalizedRuntimeEnvironment): Record<string, string> {
   const env = { ...(agent.env ?? {}) };
   const usesVllm = (agent.modelFallbacks ?? []).some((entry) => entry.model.startsWith('vllm/'));
-  const usesCortex = (agent.modelFallbacks ?? []).some((entry) => isCortexModelId(entry.model));
+  // Grok Voice is intentionally not a chat Cortex id, but the realtime mint
+  // still needs the stored Cortex key in the agent process.
+  const usesCortex = (agent.modelFallbacks ?? []).some((entry) =>
+    isCortexModelId(entry.model) || isGrokVoiceOmniModel(entry.model));
+  const storedCortex = usesCortex ? readCredentials().cortex : undefined;
 
   if (usesVllm && !env['VLLM_BASE_URL']) {
     const inferred = inferProviderBaseUrl('VLLM_BASE_URL', 'vllm', agent.id);
@@ -1165,12 +1188,14 @@ function resolveAgentRuntimeEnv(agent: AgentInfo, runtime: NormalizedRuntimeEnvi
   }
 
   if (usesCortex && !env['CORTEX_BASE_URL']) {
-    const inferred = inferProviderBaseUrl('CORTEX_BASE_URL', 'cortex', agent.id);
+    const inferred = inferProviderBaseUrl('CORTEX_BASE_URL', 'cortex', agent.id)
+      ?? storedCortex?.baseUrl?.trim().replace(/\/+$/, '');
     if (inferred) env['CORTEX_BASE_URL'] = inferred;
   }
   if (usesCortex && !env['CORTEX_API_KEY']) {
-    const inferred = inferProviderEnvValue('CORTEX_API_KEY', 'cortex', 'apiKey', agent.id);
-    if (inferred) env['CORTEX_API_KEY'] = inferred;
+    const inferred = inferProviderEnvValue('CORTEX_API_KEY', 'cortex', 'apiKey', agent.id)
+      ?? storedCortex?.apiKey?.trim();
+    if (inferred && !inferred.startsWith('eyJ')) env['CORTEX_API_KEY'] = inferred;
   }
 
   if (runtime !== 'bare_metal' && env['VLLM_BASE_URL']) {
@@ -1954,77 +1979,7 @@ export function ensureDindImage(): boolean {
 
 /** Seed agents for first-run — written to agents.json once, then user owns it */
 function seedDefaultAgents(): AgentInfo[] {
-  const runtime = isDockerAvailable() ? 'container' : 'bare_metal';
-  return [
-    {
-      id: 'local-claude',
-      name: 'Claude',
-      username: 'claude',
-      email: 'claude@local',
-      role: 'engineer',
-      status: 'active',
-      localPort: 8018,
-      executionMethod: 'claude_code_server',
-      runtimeEnvironment: runtime as AgentInfo['runtimeEnvironment'],
-      modelFallbacks: [
-        { method: 'claude_code_server', model: 'claude-opus-4-7', thinkingLevel: 'on', reasoningEffort: 'max' },
-      ],
-      mcpServers: [],
-      personalityTraits: { style: 'thorough' },
-      skills: ['coding', 'debugging', 'architecture', 'review'],
-    },
-    {
-      id: 'local-shizuha',
-      name: 'Shizuha',
-      username: 'shizuha',
-      email: 'shizuha@local',
-      role: 'engineer',
-      status: 'active',
-      localPort: 8017,
-      executionMethod: 'shizuha',
-      runtimeEnvironment: runtime as AgentInfo['runtimeEnvironment'],
-      modelFallbacks: [
-        { method: 'shizuha', model: 'gpt-5.5', reasoningEffort: 'xhigh' },
-      ],
-      mcpServers: [],
-      personalityTraits: { style: 'pragmatic' },
-      skills: ['coding', 'debugging', 'devops'],
-    },
-    {
-      id: 'local-codex',
-      name: 'Codex',
-      username: 'codex',
-      email: 'codex@local',
-      role: 'engineer',
-      status: 'active',
-      localPort: 8019,
-      executionMethod: 'codex_app_server',
-      runtimeEnvironment: runtime as AgentInfo['runtimeEnvironment'],
-      modelFallbacks: [
-        { method: 'codex_app_server', model: 'gpt-5.5', reasoningEffort: 'xhigh' },
-      ],
-      mcpServers: [],
-      personalityTraits: { style: 'pragmatic' },
-      skills: ['coding', 'debugging', 'devops', 'testing'],
-    },
-    {
-      id: 'local-claw',
-      name: 'Claw',
-      username: 'claw',
-      email: 'claw@local',
-      role: 'engineer',
-      status: 'active',
-      localPort: 8020,
-      executionMethod: 'openclaw_bridge',
-      runtimeEnvironment: runtime as AgentInfo['runtimeEnvironment'],
-      modelFallbacks: [
-        { method: 'openclaw_bridge', model: 'gpt-5.5', reasoningEffort: 'high' },
-      ],
-      mcpServers: [],
-      personalityTraits: { style: 'resourceful' },
-      skills: ['coding', 'debugging', 'devops'],
-    },
-  ];
+  return desktopFirstRunAgents();
 }
 
 export function applyFirstRunCredentialPermissionSeed(
@@ -3660,6 +3615,16 @@ export function resolveDashboardBindHosts(options: { containerMode?: boolean; ho
   // loopback and, for container agents, adds only the Docker bridge gateway IP.
   const explicit = Boolean(process.env['SHIZUHA_DASHBOARD_HOST']?.trim())
     || process.env['SHIZUHA_DASHBOARD_REMOTE'] === '1';
+  // SCLI-832: Node's listen(port, 'localhost') is one address family (macOS
+  // often [::1] only). WKWebView prefers 127.0.0.1. Proxy the other loopback
+  // so both families reach the daemon that serves /v1/voice/s2s. An explicit
+  // SHIZUHA_DASHBOARD_HOST remains operator-owned and is not widened.
+  if (!explicit && (primary === 'localhost' || primary === '::1') && !hosts.includes('127.0.0.1')) {
+    hosts.push('127.0.0.1');
+  }
+  if (!explicit && primary === '127.0.0.1' && !hosts.includes('::1')) {
+    hosts.push('::1');
+  }
   if (!explicit && options.containerMode && isConcreteBindHost(options.hostGateway) && options.hostGateway !== primary) {
     hosts.push(options.hostGateway);
   }
@@ -4266,20 +4231,24 @@ async function runDaemon(
 
   if (dashboardStarted) {
     for (const proxyHost of dashboardListenerPlan.proxyHosts) {
-      try {
-        await startDashboardTcpProxy({
-          listenHost: proxyHost,
-          port: Number(resolveDaemonHttpPort()),
-          targetHost: dashboardHost,
-          // Match the proxy target to the daemon HTTP port. When TLS is
-          // enabled, :8015 is HTTPS and :8016 is the local HTTP listener used
-          // by container agents; forwarding the Docker-bridge HTTP proxy to
-          // :8015 makes every broker call fail with 502.
-          targetPort: Number(resolveDaemonHttpPort()),
-        });
-        console.log(`[daemon] Dashboard container bridge listening on ${proxyHost}:${resolveDaemonHttpPort()} -> ${dashboardHost}:${resolveDaemonHttpPort()}`);
-      } catch (err) {
-        console.error(`[daemon] Dashboard container bridge failed on ${proxyHost}:${resolveDaemonHttpPort()}: ${(err as Error).message}`);
+      const httpPort = Number(resolveDaemonHttpPort());
+      // Docker-bridge callers speak HTTP only. Loopback aliases (SCLI-832)
+      // must cover both the HTTPS primary and the HTTP companion, or
+      // WKWebView on 127.0.0.1 still misses the voice route.
+      const loopbackAlias = proxyHost === '127.0.0.1' || proxyHost === '::1';
+      const ports = loopbackAlias && tls ? [8015, httpPort] : [httpPort];
+      for (const port of ports) {
+        try {
+          await startDashboardTcpProxy({
+            listenHost: proxyHost,
+            port,
+            targetHost: dashboardHost,
+            targetPort: port,
+          });
+          console.log(`[daemon] Dashboard alias listening on ${proxyHost}:${port} -> ${dashboardHost}:${port}`);
+        } catch (err) {
+          console.error(`[daemon] Dashboard alias failed on ${proxyHost}:${port}: ${(err as Error).message}`);
+        }
       }
     }
   }
@@ -6992,7 +6961,13 @@ async function startAgentProcess(
         console.log(`[daemon] ${agent.name}: inlined critical starred skills into gateway context prompt`);
       }
       k8sContextPrompt = combined;
-      args.push('--context-prompt', combined);
+      // Starred-skill text is multi-line. --context-prompt rejects control
+      // characters, so the gateway reads the same prompt file the bridges use.
+      args.push(...gatewayContextPromptArgs({
+        combined,
+        workspaceDir: getAgentWorkspaceDir(agent),
+        bareMetal: isBareMetalAgent,
+      }));
     }
   }
 

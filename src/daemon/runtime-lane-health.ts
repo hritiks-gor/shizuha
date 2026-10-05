@@ -18,6 +18,29 @@ function actualBridge(runtime: Record<string, unknown>): string {
   return '';
 }
 
+/** Known routing prefixes only. Stripping at the first slash of any string
+ * equated `openai/X` with `cortex/X` (rui P2 on shizuha#242). Nested forms
+ * such as `cortex/xai/grok-4.7` drop one known prefix at a time. */
+const KNOWN_ROUTING_PREFIX = /^(cortex|codex|openai|vllm)\//i;
+
+function routingPrefix(model: string): string {
+  return KNOWN_ROUTING_PREFIX.exec(model)?.[1]?.toLowerCase() ?? '';
+}
+
+function canonicalModelId(model: string): string {
+  let rest = model;
+  while (KNOWN_ROUTING_PREFIX.test(rest)) rest = rest.replace(KNOWN_ROUTING_PREFIX, '');
+  return rest;
+}
+
+function modelsCorrelate(runtimeModel: string, laneModel: string): boolean {
+  if (!runtimeModel || !laneModel) return false;
+  const runtimePrefix = routingPrefix(runtimeModel);
+  const lanePrefix = routingPrefix(laneModel);
+  if (runtimePrefix && lanePrefix && runtimePrefix !== lanePrefix) return false;
+  return canonicalModelId(runtimeModel) === canonicalModelId(laneModel);
+}
+
 export function runtimeLaneHealthFromProbe(
   context: DaemonLinkRuntimeLaneContext,
   probe: K8sRuntimeLaneProbe,
@@ -35,7 +58,7 @@ export function runtimeLaneHealthFromProbe(
     [probe.generation === context.desiredGeneration && probe.digest === context.runtimeLaneDigest, 'runtime_lane_fence_mismatch'],
     [probe.brokerReady, 'credential_broker_not_ready'],
     [actualBridge(probe.runtime) === expectedBridgeForExecutionMethod(method), 'runtime_harness_mismatch'],
-    [Boolean(model) && runtimeModel === model, 'runtime_model_mismatch'],
+    [modelsCorrelate(runtimeModel, model), 'runtime_model_mismatch'],
     [value(probe.runtime, 'initialized', 'serverReady') === true, 'runtime_harness_not_initialized'],
     [value(probe.runtime, 'authenticated', 'hasAuth') === true, 'runtime_harness_not_authenticated'],
     [value(probe.runtime, 'providerHealthy', 'provider_available', 'providerAvailable') === true, 'runtime_provider_unavailable'],

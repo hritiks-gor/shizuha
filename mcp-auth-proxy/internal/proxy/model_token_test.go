@@ -42,6 +42,7 @@ func TestFetchModelTokenForwardsExternalRefreshHints(t *testing.T) {
 		"entry-current",
 		"entry-exhausted",
 		"agent:sora",
+		"gpt-6-astra",
 	)
 	if err != nil {
 		t.Fatalf("fetch model token: %v", err)
@@ -63,5 +64,8 @@ func TestFetchModelTokenForwardsExternalRefreshHints(t *testing.T) {
 	}
 	if got.StickyKey != "agent:sora" {
 		t.Fatalf("sticky_key = %q", got.StickyKey)
+	}
+	if got.Model != "gpt-6-astra" {
+		t.Fatalf("model = %q", got.Model)
 	}
 }

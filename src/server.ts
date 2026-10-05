@@ -382,9 +382,9 @@ export async function startServer(port = 8015, host = '0.0.0.0'): Promise<void> 
         totalInputTokens += result.inputTokens;
         if (result.inputTokens > 0) lastReportedPromptTokens = result.inputTokens; // SCLI-182
         totalOutputTokens += result.outputTokens;
-        if (result.cacheCreationInputTokens) totalCacheCreationInputTokens += result.cacheCreationInputTokens;
-        if (result.cacheReadInputTokens) totalCacheReadInputTokens += result.cacheReadInputTokens;
-        store.updateTokens(activeSession.id, result.inputTokens, result.outputTokens);
+        if (typeof result.cacheCreationInputTokens === 'number') totalCacheCreationInputTokens += result.cacheCreationInputTokens;
+        if (typeof result.cacheReadInputTokens === 'number') totalCacheReadInputTokens += result.cacheReadInputTokens;
+        store.updateTokens(activeSession.id, result.inputTokens, result.outputTokens, result.cacheReadInputTokens);
 
         if (toolSearchEnabled) {
           const nextToolDefs = getToolDefs();

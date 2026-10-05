@@ -13,6 +13,7 @@
     "windows": [
       {
         "title": "Shizuha Desktop",
+        "url": "index-tauri.html",
         "width": 1180,
         "height": 780,
         "resizable": true,
@@ -20,7 +21,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; connect-src 'self' http://127.0.0.1:8015 http://127.0.0.1:8016 http://localhost:8015 http://localhost:8016 ws://127.0.0.1:8015 ws://127.0.0.1:8016 ws://localhost:8015 ws://localhost:8016; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; media-src 'self' blob:; script-src 'self'"
+      "csp": "default-src 'self'; connect-src 'self' http://127.0.0.1:18016 ws://127.0.0.1:18016 http://localhost:8015 http://localhost:8016 http://127.0.0.1:8015 http://127.0.0.1:8016 ws://localhost:8015 ws://localhost:8016 ws://127.0.0.1:8015 ws://127.0.0.1:8016; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; media-src 'self' blob:; script-src 'self'"
     }
   },
   "bundle": {
@@ -30,13 +31,11 @@
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
+      "icons/icon.icns",
       "icons/icon.ico"
     ],
     "macOS": {
-      "minimumSystemVersion": "12.0",
-      "infoPlist": {
-        "NSMicrophoneUsageDescription": "Shizuha Desktop uses the microphone for live voice-to-voice with your local coding agent."
-      }
+      "minimumSystemVersion": "12.0"
     },
     "windows": {
       "wix": null,

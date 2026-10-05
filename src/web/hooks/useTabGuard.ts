@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { isTauriShell } from '../lib/backend';
 
 /**
  * Single-tab enforcement (WhatsApp Web style).
@@ -23,10 +24,13 @@ interface TabLock {
 }
 
 export function useTabGuard() {
+  // One native window. The browser lock would treat a relaunch, or the
+  // webview's own heartbeat, as "another tab" and sit there until Use here.
+  const desktop = isTauriShell();
   const tabId = useRef(
     `tab-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
   );
-  const [isActive, setIsActive] = useState<boolean | null>(null); // null = checking
+  const [isActive, setIsActive] = useState<boolean | null>(desktop ? true : null);
   const channelRef = useRef<BroadcastChannel | null>(null);
   const heartbeatRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -74,6 +78,11 @@ export function useTabGuard() {
 
   // Initialize on mount
   useEffect(() => {
+    if (desktop) {
+      try { localStorage.removeItem(LOCK_KEY); } catch { /* ignore */ }
+      setIsActive(true);
+      return;
+    }
     // Set up BroadcastChannel
     let channel: BroadcastChannel | null = null;
     try {
@@ -121,6 +130,14 @@ export function useTabGuard() {
     };
     window.addEventListener('storage', onStorage);
 
+    // A crashed browser tab used to leave this screen up forever. Take the
+    // lock once its heartbeat is gone.
+    const reclaim = setInterval(() => {
+      const lock = readLock();
+      if (!lock || lock.tabId === tabId.current) return;
+      if (Date.now() - lock.timestamp > HEARTBEAT_TIMEOUT) claim();
+    }, HEARTBEAT_INTERVAL);
+
     // Release lock on page refresh/close — must use beforeunload because
     // React's useEffect cleanup fires AFTER the new page's mount on refresh,
     // causing the new page to see a "fresh" lock from the old page and show
@@ -135,6 +152,7 @@ export function useTabGuard() {
 
     // Clean up on unmount (tab close / SPA navigation)
     return () => {
+      clearInterval(reclaim);
       stopHeartbeat();
       window.removeEventListener('storage', onStorage);
       window.removeEventListener('beforeunload', onBeforeUnload);

@@ -163,7 +163,7 @@ export function StatusBar({
                 {model}
               </button>
               {showModelPicker && onModelChange && (
-                <div className="absolute bottom-full left-0 mb-1 bg-zinc-900 border border-zinc-700 rounded-lg shadow-xl py-1 z-50 min-w-[200px]">
+                <div className="absolute bottom-full left-0 mb-1 bg-zinc-900 border border-zinc-700 rounded-lg shadow-xl py-1 z-50 min-w-[220px] max-h-72 overflow-y-auto">
                   {selectableModels.map((m) => (
                     <button
                       key={m}

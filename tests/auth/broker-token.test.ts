@@ -157,6 +157,30 @@ describe('broker-token', () => {
       );
     });
 
+    it('forwards the requested model so the pool can filter by capability', async () => {
+      let seenUrl = '';
+      server = await startBroker((req, res) => {
+        seenUrl = req.url ?? '';
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          token: 'access-only-bundle',
+          label: 'pro',
+          entry_id: 'entry-pro',
+          lease_id: 'lease-pro',
+          expires_at: '2026-06-08T12:00:00Z',
+        }));
+      });
+      process.env[ENV] = SOCK;
+
+      await expect(fetchBrokerModelToken('openai', 5000, {
+        stickyKey: 'agent:ni',
+        model: 'gpt-6-astra',
+      })).resolves.toMatchObject({ entryId: 'entry-pro' });
+      expect(seenUrl).toBe(
+        '/model-token?provider=openai&sticky_key=agent%3Ani&model=gpt-6-astra',
+      );
+    });
+
     it('returns null when the broker is not ready (503)', async () => {
       server = await startBroker((_req, res) => { res.writeHead(503); res.end(); });
       process.env[ENV] = SOCK;

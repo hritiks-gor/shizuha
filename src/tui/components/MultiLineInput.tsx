@@ -4,6 +4,7 @@ import { pasteBufferRef } from './InputBox.js';
 import { applyBackwardDelete, applyForwardDelete, findLineEnd, findLineStart, findNextWordEnd, findPreviousWordStart, graphemeOffsets, nextGraphemeIndex, prevGraphemeIndex, graphemeMoveLeft, graphemeMoveRight, graphemeClusterAt, transposeWords } from '../utils/textEdit.js';
 import { isSgrMouseSequence } from '../utils/mouse.js';
 import { sanitizePastedChunk } from '../utils/pasteNormalize.js';
+import { displayWidth, padToDisplayWidth } from '../utils/displayWidth.js';
 import { currentInputDispatchWasConsumed } from '../renderer/inputDispatch.js';
 
 interface MultiLineInputProps {
@@ -68,10 +69,7 @@ export const MultiLineInput: React.FC<MultiLineInputProps> = ({
   const prefixWidth = 2; // prompt + space
   const contentWidth = Math.max(1, targetWidth - prefixWidth - Math.max(0, rightGutter));
 
-  const fillToWidth = (text: string, maxWidth: number): string => {
-    const clipped = text.length > maxWidth ? text.slice(0, maxWidth) : text;
-    return clipped + ' '.repeat(Math.max(0, maxWidth - clipped.length));
-  };
+  const fillToWidth = (text: string, maxWidth: number): string => padToDisplayWidth(text, maxWidth);
 
   interface VisualLine {
     text: string;
@@ -595,7 +593,8 @@ export const MultiLineInput: React.FC<MultiLineInputProps> = ({
                 const before = line.text.slice(0, cluster.start);
                 const cursorChar = line.text.slice(cluster.start, cluster.end) || ' ';
                 const after = line.text.slice(cluster.end);
-                const padding = Math.max(0, contentWidth - (before.length + cursorChar.length + after.length));
+                const painted = before + cursorChar + after;
+                const padding = Math.max(0, contentWidth - displayWidth(painted));
                 return (
                   <Text color={textColor} backgroundColor={backgroundColor}>
                     {before}

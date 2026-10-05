@@ -32,6 +32,14 @@ import type { LLMProvider, ChatMessage, ChatOptions, StreamChunk, ChatContentBlo
 import { logger } from '../utils/logger.js';
 import { readCodexAccounts, saveCodexAccount, updateCodexTokens } from '../config/credentials.js';
 import type { CodexAccountEntry } from '../config/credentials.js';
+import { fetchBrokerModelToken } from '../auth/broker-token.js';
+import { isCodexSchemaRejection, toResponsesParameterSchema } from './responses-schema.js';
+import {
+  bareModelIdForContextLookup,
+  GPT6_CATALOG_MAX_CONTEXT_WINDOW,
+  isGpt6CatalogModel,
+} from './context-window.js';
+import { responsesUsageChunk } from './usage-cache.js';
 
 const CANONICAL_CODEX_MODEL = 'gpt-5.5';
 
@@ -53,6 +61,9 @@ const MODEL_CONTEXT: Record<string, number> = {
   'gpt-5-codex': 272000,
   'gpt-5-codex-mini': 272000,
   'gpt-5': 272000,
+  'gpt-6-astra': GPT6_CATALOG_MAX_CONTEXT_WINDOW,
+  'gpt-6-sol': GPT6_CATALOG_MAX_CONTEXT_WINDOW,
+  'gpt-6-luna': GPT6_CATALOG_MAX_CONTEXT_WINDOW,
   'gpt-oss-120b': 128000,
   'gpt-oss-20b': 128000,
 };
@@ -523,6 +534,24 @@ async function fetchBrokerToken(brokerUrl: string): Promise<string | null> {
   }
 }
 
+async function fetchHiveBrokerCodexAuth(model?: string): Promise<{ accessToken: string; accountId: string } | null> {
+  const requested = (model || process.env['MODEL'] || '').trim();
+  const minted = await fetchBrokerModelToken('openai', 5000, {
+    stickyKey: `agent:${process.env['AGENT_USERNAME'] || 'default'}`,
+    ...(requested ? { model: requested } : {}),
+  });
+  if (!minted?.token) return null;
+  try {
+    const parsed = JSON.parse(minted.token) as Record<string, unknown>;
+    const accessToken = String(parsed.access_token || parsed.accessToken || '').trim();
+    const accountId = String(parsed.account_id || parsed.accountId || '').trim();
+    if (!accessToken || !accountId) return null;
+    return { accessToken, accountId };
+  } catch {
+    return null;
+  }
+}
+
 function readAllCodexAccounts(): CodexAuth[] {
   // Broker mode: CODEX_BROKER_URL env points to the daemon's token endpoint (SCLI-101)
   // Agents fetch the current access token from the daemon broker instead of doing
@@ -536,6 +565,21 @@ function readAllCodexAccounts(): CodexAuth[] {
       accessToken: '', // populated lazily on first 401 or proactive refresh
       refreshToken: '',
       accountId: 'broker',
+      authPath: '',
+    }];
+  }
+
+  // Fleet Shizuha CLI pods have the broker sidecar socket, not a local Codex
+  // refresh token. Take the ChatGPT access token from that socket and never
+  // fall through to a local refresh (that rotates the shared refresh token).
+  if (process.env['MCP_AUTH_PROXY_SOCKET']) {
+    logger.info('Using Hive broker socket for ChatGPT auth');
+    return [{
+      authMode: 'chatgpt',
+      email: 'hive-broker',
+      accessToken: '',
+      refreshToken: '',
+      accountId: 'pending',
       authPath: '',
     }];
   }
@@ -706,6 +750,13 @@ export class CodexProvider implements LLMProvider {
   maxContextWindow = 272000;
   private pool: CodexAccountPool;
 
+  /** Catalog max for gpt-6. The 272000 field is the bundled default for everything else. */
+  contextWindowFor(model: string): number {
+    const bare = bareModelIdForContextLookup(model);
+    if (isGpt6CatalogModel(bare)) return GPT6_CATALOG_MAX_CONTEXT_WINDOW;
+    return MODEL_CONTEXT[bare] ?? MODEL_CONTEXT[model] ?? this.maxContextWindow;
+  }
+
   constructor(auths: CodexAuth[]) {
     this.pool = new CodexAccountPool(auths);
   }
@@ -741,6 +792,18 @@ export class CodexProvider implements LLMProvider {
           } else {
             logger.warn('[codex-broker] proactive token fetch failed — will retry on 401');
           }
+        }
+        continue;
+      }
+      if (account.email === 'hive-broker') {
+        const minted = await fetchHiveBrokerCodexAuth();
+        if (minted) {
+          account.auth.accessToken = minted.accessToken;
+          account.auth.accountId = minted.accountId;
+          this.pool.refreshClient(i);
+          logger.info('[hive-broker] proactive ChatGPT token fetch OK');
+        } else {
+          logger.warn('[hive-broker] proactive ChatGPT token fetch failed — will retry on 401');
         }
         continue;
       }
@@ -781,12 +844,23 @@ export class CodexProvider implements LLMProvider {
       type: 'function' as const,
       name: t.name,
       description: t.description,
-      parameters: t.inputSchema,
+      parameters: toResponsesParameterSchema(t.inputSchema),
       strict: false as const,
     }));
 
     let stream: Stream<ResponseStreamEvent>;
     let lastError: unknown = null;
+    const hiveAccount = this.pool.current();
+    if (hiveAccount.email === 'hive-broker' && !hiveAccount.auth.accessToken) {
+      const minted = await fetchHiveBrokerCodexAuth(normalizedModel);
+      if (!minted) {
+        throw new Error('Hive broker did not provide a ChatGPT token for the Shizuha CLI. No model request was sent.');
+      }
+      hiveAccount.auth.accessToken = minted.accessToken;
+      hiveAccount.auth.accountId = minted.accountId;
+      this.pool.refreshClient(this.pool.currentIndex);
+    }
+
     let requestModel = normalizedModel;
     let reasoningPayloadDisabled = false;
     let reasoningFallbackTried = false;
@@ -920,6 +994,17 @@ export class CodexProvider implements LLMProvider {
             }
             throw new Error(`Codex broker token fetch failed. Check daemon is running at ${process.env['CODEX_BROKER_URL']}.`);
           }
+          if (account.email === 'hive-broker') {
+            const minted = await fetchHiveBrokerCodexAuth();
+            if (minted) {
+              account.auth.accessToken = minted.accessToken;
+              account.auth.accountId = minted.accountId;
+              this.pool.refreshClient(this.pool.currentIndex);
+              logger.info('[hive-broker] 401 recovery: fetched fresh ChatGPT token');
+              continue;
+            }
+            throw new Error('Hive broker ChatGPT token fetch failed. No further model request was sent.');
+          }
           if (this.pool.reloadAccount(this.pool.currentIndex)) {
             logger.info({ email: account.email }, 'Reloaded fresh token from disk');
             continue;
@@ -1004,6 +1089,12 @@ export class CodexProvider implements LLMProvider {
           logger.info({ attempt, delay, email: account.email }, `Server error (${err.status}), retrying in ${Math.round(delay / 1000)}s...`);
           await sleep(delay);
           continue;
+        }
+
+        // A rejected function schema is deterministic. Dropping service_tier or
+        // reasoning resends the same tools and bills the prefill again.
+        if (isCodexSchemaRejection(err.status, err.message)) {
+          throw err;
         }
 
         // service_tier: 'priority' may not be supported for all accounts/models.
@@ -1130,6 +1221,8 @@ export class CodexProvider implements LLMProvider {
     const toolCalls = new Map<string, { id: string; name: string; args: string }>();
     let inputTokens = 0;
     let outputTokens = 0;
+    let cacheReadInputTokens: number | undefined;
+    let cacheCreationInputTokens: number | undefined;
     let lastThinkingHeartbeat = 0;
 
     for await (const event of stream) {
@@ -1203,11 +1296,15 @@ export class CodexProvider implements LLMProvider {
           break;
         }
 
-        case 'response.completed': {
-          const usage = event.response?.usage;
-          if (usage) {
-            inputTokens = usage.input_tokens ?? 0;
-            outputTokens = usage.output_tokens ?? 0;
+        case 'response.completed':
+        case 'response.incomplete': {
+          const usage = (event as { response?: { usage?: { input_tokens?: number; output_tokens?: number } } }).response?.usage;
+          const parsed = responsesUsageChunk(usage);
+          if (parsed) {
+            inputTokens = parsed.inputTokens;
+            outputTokens = parsed.outputTokens;
+            cacheReadInputTokens = parsed.cacheReadInputTokens;
+            cacheCreationInputTokens = parsed.cacheCreationInputTokens;
           }
           break;
         }
@@ -1238,12 +1335,6 @@ export class CodexProvider implements LLMProvider {
           throw new Error(`Codex response failed: ${failMsg}`);
         }
 
-        case 'response.incomplete': {
-          // ResponseIncompleteEvent: response was cut short (safety, length, etc.)
-          // Not retryable — yield what we have and mark as done
-          break;
-        }
-
         // Streaming reasoning summary — emit the actual reasoning text so the
         // user can see the model's thinking in real time (like Claude's thinking blocks)
         case 'response.reasoning_summary_text.delta': {
@@ -1262,8 +1353,14 @@ export class CodexProvider implements LLMProvider {
       }
     }
 
-    if (inputTokens || outputTokens) {
-      yield { type: 'usage', inputTokens, outputTokens };
+    if (inputTokens || outputTokens || cacheReadInputTokens != null || cacheCreationInputTokens != null) {
+      yield {
+        type: 'usage',
+        inputTokens,
+        outputTokens,
+        ...(cacheReadInputTokens != null ? { cacheReadInputTokens } : {}),
+        ...(cacheCreationInputTokens != null ? { cacheCreationInputTokens } : {}),
+      };
     }
     yield { type: 'done' };
   }

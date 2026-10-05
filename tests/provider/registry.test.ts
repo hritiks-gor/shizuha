@@ -156,7 +156,10 @@ describe('isCortexModelId (CTX-67)', () => {
       'gpt-oss-120b',            // was silently falling to ollama before the rider
       'MiniMax-M2.7',
       'DeepSeek-V3.2',
-      'grok-4.6',               // managed xAI via Cortex (fleet agents)
+      'grok-4.7',               // managed xAI via Cortex (fleet pin)
+      'grok-4.7-latest',
+      'xai/grok-4.7',
+      'grok-4.6',               // deprecated alias, still routed via Cortex
       'grok-4.6-latest',
       'xai/grok-4.6',
       'grok-4.5',               // managed xAI via Cortex (fleet agents)
@@ -195,7 +198,7 @@ describe('isCortexModelId (CTX-67)', () => {
       },
     } as ShizuhaConfig;
     const registry = new ProviderRegistry(config);
-    for (const id of ['grok-4.6', 'grok-4.6-latest', 'xai/grok-4.6', 'grok-4.5', 'grok-4.5-latest', 'xai/grok-4.5']) {
+    for (const id of ['grok-4.7', 'grok-4.7-latest', 'xai/grok-4.7', 'grok-4.6', 'grok-4.6-latest', 'xai/grok-4.6', 'grok-4.5', 'grok-4.5-latest', 'xai/grok-4.5']) {
       const r = registry.resolveWithModel(id);
       expect(r.provider.name).toBe('cortex');
       // Full offer id is preserved for the gateway (do not strip xai/).

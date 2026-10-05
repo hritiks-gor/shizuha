@@ -25,6 +25,120 @@ html, body {
   --color-shizuha-950: #083344;
 }
 
+/* Desktop stage — same glass language as shizuha.com / Hive (hv-panel, hv-grid-bg).
+   Dark is the console. Light stays airy. Motion is ambient, not per-control. */
+.sd-stage {
+  position: relative;
+  background-color: #f4f5fb;
+  color: #2d3440;
+  background-image:
+    radial-gradient(ellipse 60% 42% at 50% -8%, rgba(99, 102, 241, 0.14), transparent 62%),
+    radial-gradient(ellipse 42% 40% at 100% 100%, rgba(139, 92, 246, 0.12), transparent 58%);
+}
+.dark .sd-stage {
+  background-color: #0c0c14;
+  color: #e7e8f0;
+  background-image:
+    radial-gradient(ellipse 58% 48% at 38% 16%, rgba(49, 46, 129, 0.72), transparent 64%),
+    radial-gradient(ellipse 48% 58% at 96% 92%, rgba(88, 28, 135, 0.62), transparent 62%);
+}
+.sd-stage::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background: transparent;
+}
+.sd-stage > * {
+  position: relative;
+  z-index: 1;
+}
+@keyframes sd-aurora {
+  from { transform: translate3d(0, 0, 0) scale(1); }
+  to { transform: translate3d(0, 1.5%, 0) scale(1.04); }
+}
+.sd-sidebar {
+  background-color: #101018;
+  color: #d4d4d8;
+  border-right: 1px solid rgba(255, 255, 255, 0.06);
+}
+.sd-chrome,
+.sd-composer {
+  background-color: rgba(255, 255, 255, 0.72);
+  border-color: rgba(15, 23, 42, 0.08);
+  backdrop-filter: blur(18px);
+}
+.dark .sd-chrome,
+.dark .sd-composer {
+  background-color: transparent;
+  background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0.015));
+  border-color: rgba(255, 255, 255, 0.07);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+.sd-panel {
+  border-radius: 1.5rem;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  background: rgba(255, 255, 255, 0.82);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04), 0 24px 60px -28px rgba(15, 23, 42, 0.28);
+  backdrop-filter: blur(18px);
+}
+.dark .sd-panel {
+  border-color: rgba(255, 255, 255, 0.08);
+  background-color: transparent;
+  background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.02));
+  box-shadow:
+    0 0 0 1px rgba(34, 211, 238, 0.05),
+    0 24px 60px -28px rgba(0, 0, 0, 0.85),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+.sd-field {
+  width: 100%;
+  border-radius: 0.85rem;
+  border: 1px solid rgba(15, 23, 42, 0.1);
+  background: rgba(255, 255, 255, 0.8);
+  color: inherit;
+  transition: border-color 160ms ease, box-shadow 160ms ease;
+}
+.dark .sd-field {
+  border-color: rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.04);
+}
+.sd-field:focus {
+  outline: none;
+  border-color: rgba(8, 145, 178, 0.7);
+  box-shadow: 0 0 0 3px rgba(8, 145, 178, 0.18);
+}
+.sd-mark {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 4.5rem;
+  height: 4.5rem;
+  border-radius: 1.3rem;
+  background: linear-gradient(180deg, rgba(34, 211, 238, 0.22), rgba(99, 102, 241, 0.12));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25), 0 16px 40px -20px rgba(8, 145, 178, 0.8);
+}
+.sd-mark::after {
+  content: '';
+  position: absolute;
+  inset: -6px;
+  border-radius: 1.6rem;
+  border: 1px solid rgba(34, 211, 238, 0.45);
+  animation: sd-ring 2.4s ease-out infinite;
+}
+@keyframes sd-ring {
+  0% { opacity: 0.7; transform: scale(0.92); }
+  70%, 100% { opacity: 0; transform: scale(1.18); }
+}
+.sd-kicker {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: rgba(8, 145, 178, 0.9);
+}
+
 /* Scrollbar styling */
 ::-webkit-scrollbar {
   width: 6px;

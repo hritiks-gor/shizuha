@@ -9,6 +9,7 @@ import { ModelPicker } from './components/ModelPicker';
 import { CommandPalette } from './components/CommandPalette';
 import { SearchBar } from './components/SearchBar';
 import { LoginScreen, ForcePasswordChange } from './components/LoginScreen';
+import { LocalModelCard } from './components/LocalModelCard';
 import { Settings } from './components/Settings';
 import { TaskBoard } from './components/TaskBoard';
 import { WorkflowsView } from './components/WorkflowsView';
@@ -23,6 +24,7 @@ import { useTabGuard } from './hooks/useTabGuard';
 import { exportAsMarkdown, exportAsJSON, downloadFile } from './lib/export';
 import { getAgentModel, getAgentMethod, getAgentEffort, getAgentThinking } from './lib/types';
 import type { Agent, ImageAttachment } from './lib/types';
+import { getBackendUrl, isLoopbackBackendUrl, isTauriShell } from './lib/backend';
 
 const VERSION = '0.1.0-beta';
 
@@ -46,14 +48,16 @@ export default function App() {
 
   // Agent selection — restore last selected agent from localStorage
   const [agents, setAgents] = useState<Agent[]>(() => {
-    // Hydrate from localStorage cache to avoid flash of empty sidebar on hard refresh
+    // The desktop window must not paint a stale roster (Codex from the
+    // 127.0.0.1 listener) before the live core answers.
+    if (isTauriShell()) return [];
     try {
       const cached = localStorage.getItem('shizuha_agents_cache');
       return cached ? JSON.parse(cached) : [];
     } catch { return []; }
   });
   const [selectedAgent, setSelectedAgent] = useState<Agent | null>(() => {
-    // Restore selected agent from cached list immediately
+    if (isTauriShell()) return null;
     try {
       const savedId = localStorage.getItem('shizuha_selected_agent');
       if (!savedId) return null;
@@ -75,6 +79,8 @@ export default function App() {
   // Sidebar visible by default on desktop
   const [sidebarOpen, setSidebarOpen] = useState(isDesktop);
   const [restarting, setRestarting] = useState(false);
+  const [shellError, setShellError] = useState<string | null>(null);
+  const [resetArmed, setResetArmed] = useState(false);
   const [resettingSession, setResettingSession] = useState(false);
   const [activeView, setActiveView] = useState<'chat' | 'activity'>('chat');
 
@@ -87,10 +93,11 @@ export default function App() {
         const updated = agentList.find((a) => a.id === prev.id);
         if (updated) return updated;
       }
-      if (!restoreSelection) return prev;
+      if (agentList.length === 1) return agentList[0] ?? prev;
+      if (!restoreSelection) return prev && agentList.some((a) => a.id === prev.id) ? prev : null;
       const savedId = localStorage.getItem('shizuha_selected_agent');
-      if (!savedId) return prev;
-      return agentList.find((a) => a.id === savedId) ?? prev;
+      if (!savedId) return null;
+      return agentList.find((a) => a.id === savedId) ?? null;
     });
     if (restoreSelection) {
       restoredRef.current = true;
@@ -175,6 +182,11 @@ export default function App() {
   }, [tryLogin]);
 
   const handleDashboardAuthExpired = useCallback(async (): Promise<boolean> => {
+    if (isLoopbackBackendUrl(getBackendUrl())) {
+      setAuthState('authenticated');
+      setLoginError(null);
+      return true;
+    }
     const ok = await tryAutoReauth();
     if (ok) {
       setAuthState('authenticated');
@@ -204,8 +216,15 @@ export default function App() {
     applyAgentList(data.agents ?? [], true);
   }, [applyAgentList]);
 
-  // Check session on mount — auto-reauth if session expired
+  // Check session on mount — auto-reauth if session expired.
+  // A loopback core already trusts this machine, so Desktop (and a local
+  // browser) opens straight into chat. A remote core still asks for the
+  // dashboard password.
   useEffect(() => {
+    if (isLoopbackBackendUrl(getBackendUrl())) {
+      setAuthState('authenticated');
+      return;
+    }
     (async () => {
       try {
         const r = await fetch('/v1/dashboard/session');
@@ -276,7 +295,7 @@ export default function App() {
       }
       if (res.status === 401) {
         const url = typeof args[0] === 'string' ? args[0] : (args[0] as Request).url;
-        if (!url.includes('/v1/dashboard/login') && !url.includes('/v1/dashboard/session')) {
+        if (!isLoopbackBackendUrl(getBackendUrl()) && !url.includes('/v1/dashboard/login') && !url.includes('/v1/dashboard/session')) {
           // Try silent re-auth (only one at a time to avoid stampede)
           if (!reauthing.current) {
             reauthing.current = true;
@@ -581,19 +600,19 @@ export default function App() {
   const agentThinking = selectedAgent ? getAgentThinking(selectedAgent) : undefined;
 
   return (
-    <div className="h-[100dvh] flex bg-zinc-950 text-zinc-100 overflow-hidden">
+    <div className="sd-stage h-[100dvh] flex overflow-hidden">
       {/* Mobile sidebar backdrop */}
       {sidebarOpen && (
         <div
-          className="fixed inset-0 z-30 bg-black/50 sm:hidden"
+          className="fixed inset-0 z-30 bg-black/50 md:hidden"
           onClick={() => setSidebarOpen(false)}
         />
       )}
 
-      {/* Agent sidebar */}
+      {/* Agent sidebar. In-flow from tablet width up. Below that it is an overlay with a scrim. */}
       <div className={
         sidebarOpen
-          ? 'fixed inset-y-0 left-0 z-40 sm:relative sm:z-auto'
+          ? 'fixed inset-y-0 left-0 z-40 md:relative md:z-auto'
           : 'hidden'
       }>
         <AgentSidebar
@@ -601,6 +620,15 @@ export default function App() {
           selectedAgentId={selectedAgent?.id ?? null}
           agents={agents}
           onSelectAgent={handleSelectAgent}
+          onAgentCreated={(agent) => {
+            setAgents((prev) => prev.some((a) => a.id === agent.id) ? prev : [...prev, agent]);
+            handleSelectAgent(agent);
+            void fetchAgentsHttp().catch(() => {});
+          }}
+          onAgentDeleted={(agentId) => {
+            setAgents((prev) => prev.filter((agent) => agent.id !== agentId));
+            setSelectedAgent((prev) => (prev?.id === agentId ? null : prev));
+          }}
           onClose={() => setSidebarOpen(false)}
         />
       </div>
@@ -642,10 +670,10 @@ export default function App() {
       )}
 
       {/* Main content */}
-      <div className="flex-1 flex flex-col min-w-0">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         {/* Header */}
-        <header className="flex items-center justify-between px-2 sm:px-4 py-2 sm:py-2.5 border-b border-zinc-800 bg-zinc-900 safe-top">
-          <div className="flex items-center gap-1.5 sm:gap-2.5">
+        <header className="sd-chrome flex min-w-0 items-center justify-between gap-2 px-2 sm:px-4 py-2 sm:py-2.5 border-b safe-top">
+          <div className="flex min-w-0 flex-1 items-center gap-1.5 sm:gap-2.5">
             {/* Sidebar toggle — only when sidebar is closed */}
             {!sidebarOpen && (
               <button
@@ -663,7 +691,7 @@ export default function App() {
             {selectedAgent ? (
               <button
                 onClick={() => setProfileOpen(true)}
-                className="flex items-center gap-2 hover:bg-zinc-800 rounded-lg px-1.5 py-1 transition-colors cursor-pointer"
+                className="flex min-w-0 max-w-full items-center gap-2 hover:bg-zinc-800 rounded-lg px-1.5 py-1 transition-colors cursor-pointer"
                 title="View agent settings"
               >
                 <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-shizuha-600 flex items-center justify-center relative">
@@ -677,17 +705,17 @@ export default function App() {
                       : 'bg-zinc-500'
                   }`} />
                 </div>
-                <div className="text-left">
+                <div className="min-w-0 text-left">
                   <div className="flex items-center gap-1.5">
-                    <h1 className="text-sm font-semibold text-zinc-100">{selectedAgent.name}</h1>
+                    <h1 className="min-w-[4.5rem] shrink-0 truncate text-sm font-semibold text-zinc-100">{selectedAgent.name}</h1>
                     <svg className="w-3 h-3 text-zinc-500" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
                       <path d="M4 5l2 2 2-2" />
                     </svg>
                   </div>
-                  <p className="text-[10px] text-zinc-500 flex items-center gap-1 flex-wrap max-w-[45vw] sm:max-w-none">
-                    <span className="truncate">{selectedAgent.role ?? 'Agent'} · {agentMethod}/{agentModel}</span>
+                  <p className="flex min-w-0 items-center gap-1 text-[10px] text-zinc-500">
+                    <span className="truncate">{selectedAgent.role ?? 'Agent'} · {agentMethod}</span>
                     {selectedAgent.runtimeEnvironment === 'bare_metal' && (
-                      <span className="bg-red-500/20 text-red-400 px-1 rounded text-[9px]" title="No isolation — bare metal">bare</span>
+                      <span className="bg-white/10 text-zinc-300 px-1 rounded text-[9px]" title="Runs on this Mac">host</span>
                     )}
                     {agentEffort && <span className="bg-amber-500/15 text-amber-400 px-1 rounded text-[9px]">{agentEffort}</span>}
                     {agentThinking && <span className="bg-blue-500/15 text-blue-400 px-1 rounded text-[9px]">thinking:{agentThinking}</span>}
@@ -707,7 +735,7 @@ export default function App() {
             )}
           </div>
 
-          <div className="flex items-center gap-1 sm:gap-1.5">
+          <div className="flex shrink-0 items-center gap-1 sm:gap-1.5">
             {/* Chat / Activity tab toggle */}
             {selectedAgent && (
               <div className="flex bg-zinc-800 rounded-lg p-0.5 mr-1">
@@ -730,11 +758,12 @@ export default function App() {
               <button
                 onClick={async () => {
                   setRestarting(true);
+                  setShellError(null);
                   try {
                     await chat.rpc('agents.restart', { agent_id: selectedAgent.id });
                     chat.restartSession();
                   } catch (e) {
-                    console.error('Restart error:', e);
+                    setShellError(e instanceof Error ? e.message : 'Restart failed');
                   } finally {
                     setTimeout(() => setRestarting(false), 5000);
                   }
@@ -753,10 +782,13 @@ export default function App() {
             {selectedAgent && (
               <button
                 onClick={async () => {
-                  const confirmed = window.confirm(
-                    `Reset ${selectedAgent.name}'s runtime session?\n\nThis permanently clears the agent's durable conversation state and restarts the runtime fresh.`,
-                  );
-                  if (!confirmed) return;
+                  if (!resetArmed) {
+                    setResetArmed(true);
+                    setShellError(`Reset ${selectedAgent.name}'s runtime session? This clears the durable conversation. Click reset again to confirm.`);
+                    return;
+                  }
+                  setResetArmed(false);
+                  setShellError(null);
                   setResettingSession(true);
                   try {
                     const res = await fetch(`/v1/agents/${selectedAgent.id}/reset-session`, { method: 'POST' });
@@ -767,7 +799,7 @@ export default function App() {
                     chat.clearMessages();
                     chat.restartSession();
                   } catch (e) {
-                    console.error('Reset session error:', e);
+                    setShellError(e instanceof Error ? e.message : 'Reset failed');
                   } finally {
                     setTimeout(() => setResettingSession(false), 5000);
                   }
@@ -876,6 +908,12 @@ export default function App() {
             </button>
           </div>
         </header>
+        {shellError && (
+          <div className="px-3 py-2 text-xs text-red-200 bg-red-950/80 border-b border-red-900/50 flex items-start gap-2" role="alert">
+            <span className="flex-1">{shellError}</span>
+            <button type="button" onClick={() => setShellError(null)} className="text-red-300 hover:text-white cursor-pointer">Dismiss</button>
+          </div>
+        )}
 
         {/* Chat area */}
         <div className="flex-1 flex flex-col relative min-h-0">
@@ -895,6 +933,7 @@ export default function App() {
                 muted={live.muted}
                 lastHeard={live.lastHeard}
                 lastReply={live.lastReply}
+                agentLabel={selectedAgent.name}
                 onMute={live.toggleMute}
                 onEnd={live.endCall}
                 onRetry={live.retryCall}
@@ -907,6 +946,8 @@ export default function App() {
                 activeTools={chat.activeTools}
                 reasoningSummaries={chat.reasoningSummaries}
                 highlightMessageId={highlightMsgId}
+                agentId={selectedAgent.id}
+                onLocalModel={(modelId) => chat.setModel(modelId)}
               />
               </>
             ) : (
@@ -934,7 +975,7 @@ export default function App() {
               recordingDuration={talk.recordingDuration}
               micSupported={talk.micSupported}
               talkError={talk.error}
-              liveAvailable={live.s2sReady !== false}
+              liveAvailable={Boolean(selectedAgent)}
               liveActive={live.callState !== 'idle' && live.callState !== 'error'}
               onToggleLive={() => {
                 if (live.isCallActive()) live.endCall();
@@ -1041,23 +1082,25 @@ export default function App() {
 
 function NoAgentSelected({ onOpenSidebar, sidebarOpen }: { onOpenSidebar: () => void; sidebarOpen: boolean }) {
   return (
-    <div className="flex-1 flex flex-col items-center justify-center text-center px-4">
-      <div className="w-16 h-16 rounded-2xl bg-shizuha-600/20 flex items-center justify-center mb-4">
-        <span className="text-3xl">S</span>
+    <div className="min-h-0 flex-1 overflow-y-auto">
+      <div className="flex flex-col items-center px-4 py-4">
+        <div className="sd-panel w-full max-w-md px-4 py-4 sm:px-6">
+          <h1 data-testid="desktop-hero" className="text-3xl font-light tracking-tight">
+            <span className="text-indigo-400/70">静葉</span>{' '}
+            <span className="font-medium">Shizuha</span>
+          </h1>
+          <p className="mt-1 text-sm text-zinc-400">Select an agent, or sign in below.</p>
+          <LocalModelCard onSaved={() => {}} />
+          {!sidebarOpen && (
+            <button
+              onClick={onOpenSidebar}
+              className="mt-4 px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-sm rounded-lg transition-colors cursor-pointer"
+            >
+              Show Agents
+            </button>
+          )}
+        </div>
       </div>
-      <h1 className="text-xl font-semibold text-zinc-200">Shizuha Dashboard</h1>
-      <p className="text-sm text-zinc-500 mt-2 max-w-sm">
-        Select an agent from the sidebar to start chatting.
-        Each agent is a specialized AI team member.
-      </p>
-      {!sidebarOpen && (
-        <button
-          onClick={onOpenSidebar}
-          className="mt-4 px-4 py-2 bg-shizuha-600 hover:bg-shizuha-500 text-white text-sm rounded-lg transition-colors cursor-pointer"
-        >
-          Show Agents
-        </button>
-      )}
     </div>
   );
 }

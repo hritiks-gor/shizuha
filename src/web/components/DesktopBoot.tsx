@@ -9,17 +9,23 @@ interface HealthResult {
   health?: { version?: string; message?: string } | null;
 }
 
+// [::1] only for the desktop core. On v4, 127.0.0.1:8016 answers /health
+// too, but it is a different process whose roster is Codex, not Shizuha.
 const CANDIDATES = [
-  'http://127.0.0.1:8016',
-  'http://127.0.0.1:8015',
-  'http://localhost:8016',
-  'http://localhost:8015',
+  'http://[::1]:8016',
+  'http://[::1]:8015',
 ];
 
 async function probe(url: string): Promise<boolean> {
+  const base = url.replace(/\/+$/, '');
   try {
-    const resp = await fetch(`${url.replace(/\/+$/, '')}/health`, { signal: AbortSignal.timeout(2500) });
-    return resp.ok;
+    const health = await fetch(`${base}/health`, { signal: AbortSignal.timeout(2500) });
+    if (!health.ok) return false;
+    const body = await health.json() as { service?: string };
+    if (body.service !== 'shizuha-daemon') return false;
+    const voice = await fetch(`${base}/v1/voice/s2s`, { signal: AbortSignal.timeout(2500) });
+    const text = await voice.text();
+    return !text.includes('Route GET');
   } catch {
     return false;
   }
@@ -39,6 +45,25 @@ export function DesktopBoot({ onReady }: { onReady: () => void }) {
   const [busy, setBusy] = useState(false);
 
   const attach = useCallback(async (): Promise<boolean> => {
+    const tauri = typeof window !== 'undefined'
+      && Boolean((window as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__);
+    if (tauri) {
+      try {
+        const { invoke } = await import('@tauri-apps/api/core');
+        const result = await invoke<{ ok: boolean; message: string }>('desktop_bridge');
+        if (result.ok && result.message.startsWith('http')) {
+          setBackendUrl(result.message);
+          onReady();
+          return true;
+        }
+        if (!result.ok && result.message) {
+          setError(result.message);
+        }
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'The desktop bridge did not start');
+      }
+      return false;
+    }
     for (const url of CANDIDATES) {
       if (await probe(url)) {
         setBackendUrl(url);
@@ -77,7 +102,7 @@ export function DesktopBoot({ onReady }: { onReady: () => void }) {
         <p className="text-[10px] uppercase tracking-[0.28em] text-cyan-300/80">Shizuha Desktop</p>
         <h1 className="mt-2 text-2xl font-semibold tracking-tight">Talk to your coding agent</h1>
         <p className="mt-3 text-sm text-zinc-400 leading-relaxed">
-          Same Hina-style voice-to-voice as shizuha.com — the local harness hears you, speaks back, and can edit the repo.
+          The app connects to the Shizuha core on this Mac. You do not install a second CLI to open the window.
         </p>
         <p className="mt-5 text-sm text-zinc-300">{status}</p>
         {error && <p className="mt-3 text-sm text-red-400">{error}</p>}
@@ -90,9 +115,7 @@ export function DesktopBoot({ onReady }: { onReady: () => void }) {
           {busy ? 'Starting…' : 'Start local core'}
         </button>
         <p className="mt-4 text-xs text-zinc-500 leading-relaxed">
-          Needs the <code className="text-zinc-300">shizuha</code> CLI on your PATH.
-          Install with <code className="text-zinc-300">curl -fsSL https://shizuha.com/install.sh | bash</code>,
-          then add an xAI or Cortex key for Live.
+          The core listens on this Mac. The window reaches it through a local bridge, including when the app is opened from the Dock.
         </p>
       </div>
     </div>

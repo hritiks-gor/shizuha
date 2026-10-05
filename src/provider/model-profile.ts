@@ -800,11 +800,29 @@ const PROFILES: Array<[string, ModelProfile]> = [
     defaultReasoningEffort: 'high',
   }],
 
-  // ── Grok 4.5 / 4.6 (xAI SuperGrok, 500K) — must precede generic grok- ──
-  // reasoning_effort: low | medium | high (default) | xhigh (4.6+).
+  // ── Grok 4.7 / 4.6 / 4.5 (xAI SuperGrok, 500K) — must precede generic grok- ──
+  // reasoning_effort: low | medium | high (xAI default) | xhigh.
+  // grok-4.7 is the fleet pin (default effort medium). grok-4.6 remains a
+  // profile so a leftover id still has a 500K window; Hive rewrites it to 4.7.
   // Cannot disable reasoning. Prefix cache + 500K window are load-bearing
   // for conversational latency; the old 131072 profile caused SCLI to warn
   // and clamp against the served 500K window.
+  ['grok-4.7', {
+    displayName: 'Grok 4.7',
+    useFullSystemPrompt: true,
+    useLeanBasePrompt: true,
+    noSystemPrompt: false,
+    includeToolListInPrompt: false,
+    supportsThinking: true,
+    disableThinkingExplicitly: false,
+    toolCallFormat: 'openai',
+    supportsParallelToolCalls: true,
+    nativeContextWindow: 500000,
+    recommendedMaxOutputTokens: 16384,
+    benefitsFromPrefixCaching: true,
+    defaultReasoningEffort: 'medium',
+    reasoningPassback: 'always',
+  }],
   ['grok-4.6', {
     displayName: 'Grok 4.6',
     useFullSystemPrompt: true,
@@ -1016,7 +1034,7 @@ export function resolveReasoningEffortForRequest(
   // not acceptable while we are optimizing TTFT. Benches that need high set
   // SHIZUHA_ALLOW_GROK_HIGH_REASONING=1.
   const modelId = (modelName || '').toLowerCase();
-  const isSuperGrok = modelId.includes('grok-4.6') || modelId.includes('grok-4.5');
+  const isSuperGrok = modelId.includes('grok-4.7') || modelId.includes('grok-4.6') || modelId.includes('grok-4.5');
   const allowHigh = process.env['SHIZUHA_ALLOW_GROK_HIGH_REASONING'] === '1';
   if (isSuperGrok && !allowHigh && (resolved === 'high' || resolved === 'xhigh')) {
     return 'low';

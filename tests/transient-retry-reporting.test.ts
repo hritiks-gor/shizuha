@@ -168,3 +168,67 @@ describe('resolveRetryDelayMs', () => {
     expect(hi).toBe(5_500);
   });
 });
+
+/**
+ * SCLI-522 leg 4 (kei typed verdict 2026-09-16, FAIL partial repair): the
+ * stall retry rendered "(attempt 1, indefinite)" — in-place AND hardcoded in
+ * the artifact template — so the turn retried forever at 600s/attempt and the
+ * "turn ends idle with diagnosis after bounded attempts" acceptance leg
+ * failed. The TUI's stall path is bounded (SCLI-388: the next stall ends the
+ * turn idle with the provider/model timeout diagnosis naming /model); the
+ * line must say so.
+ */
+describe('formatRetryNotice bounded-attempts render (SCLI-522 leg 4)', () => {
+  it('renders the finite cap instead of "indefinite" when maxAttempts is passed', () => {
+    const line = formatRetryNotice({
+      label: 'Provider stream/first-token stall',
+      code: 'ETIMEDOUT',
+      message: 'vLLM no first chunk: no events for 600s',
+      attempt: 1,
+      elapsedMs: 600_000,
+      delayMs: 4_000,
+      maxAttempts: 2,
+    });
+    expect(line).toContain('attempt 1/2');
+    expect(line).not.toContain('indefinite');
+    expect(line).toContain('stalled 10m');
+  });
+
+  it('never emits the word "indefinite" even without a cap', () => {
+    const line = formatRetryNotice({
+      label: 'API error',
+      status: 503,
+      message: 'overloaded',
+      attempt: 27,
+      elapsedMs: 640_000,
+      delayMs: 38_000,
+    });
+    expect(line).toContain('attempt 27');
+    expect(line).not.toContain('indefinite');
+  });
+
+  it('mirrors the real TUI caller sequence: bounded notice → stall_timeout idle end naming /model', async () => {
+    // Source-level pin (the repo's established convention for interactive
+    // harnesses — see tests/provider/ollama-interactive-timeout.test.ts):
+    // the TUI notice branch must pass the SCLI-388 cap as maxAttempts, name
+    // the escalation on the final allowed attempt, and the bound branch must
+    // end the turn idle with the provider/model timeout diagnosis naming
+    // /model (healthy fallback). The keepalive leg (request_wait during the
+    // no-header wait) is pinned by tests/provider/vllm-interactive-timeout.test.ts.
+    const { readFileSync } = await import('node:fs');
+    const src = readFileSync(new URL('../src/tui/session.ts', import.meta.url), 'utf8');
+
+    // The notice passes the finite cap — never an unbounded render.
+    expect(src).toMatch(/maxAttempts:\s*isFirstTokenStall\s*\?\s*stallCap\s*:\s*undefined/);
+    expect(src).toMatch(/const stallCap = Math\.max\(1, MAX_FIRST_TOKEN_STALL_RETRIES\)/);
+
+    // The final allowed attempt names the escalation (idle end + /model).
+    expect(src).toMatch(/next stall ends the turn idle with a provider\/model timeout diagnosis; try \/model <reachable-id>/);
+
+    // The SCLI-388 bound branch ends the turn idle with the diagnosis.
+    expect(src).toMatch(/code: 'stall_timeout'/);
+    expect(src).toMatch(/Provider\/model timeout: no response headers after/);
+    expect(src).toMatch(/Try \/model <reachable-id> or Esc and relaunch with a healthy model\./);
+    expect(src).toMatch(/retryable: false/);
+  });
+});

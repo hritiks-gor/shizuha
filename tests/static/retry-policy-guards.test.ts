@@ -60,7 +60,7 @@ describe('SCLI session-level retry policy guards', () => {
     }
   });
 
-  it('has the shared retry-notice builder advertise indefinite retries', async () => {
+  it('keeps the shared retry-notice builder honest about the bounded stall path', async () => {
     const { formatRetryNotice } = await import('../../src/provider/transient-errors.js');
     const notice = formatRetryNotice({
       label: 'API error',
@@ -70,12 +70,27 @@ describe('SCLI session-level retry policy guards', () => {
       elapsedMs: 120_000,
       delayMs: 8_000,
     });
-    expect(notice).toMatch(/indefinite/i);
-    // Never render a bounded "attempt 4 / 10" budget.
+    // SCLI-522 leg 4 / SCLI-388: the stall path is bounded, so the line must
+    // NOT claim "indefinite" — staying quiet about the policy beats lying by
+    // omission. The no-indefinite render is pinned in transient-retry-reporting.
+    expect(notice).not.toMatch(/indefinite/i);
+    // No cap passed: render the plain attempt index, never a fabricated budget.
     expect(notice).not.toMatch(/attempt\s*\d+\s*\/\s*\d+/i);
     // The operator must be able to see the cause and how long it has been stuck.
     expect(notice).toContain('latency tail guard');
     expect(notice).toMatch(/stalled 2m/);
+    // With a cap the render is the bounded budget (attempt N/cap) — still honest.
+    const bounded = formatRetryNotice({
+      label: 'Provider stream/first-token stall',
+      code: 'ETIMEDOUT',
+      message: 'vLLM no first chunk: no events for 600s',
+      attempt: 1,
+      elapsedMs: 600_000,
+      delayMs: 4_000,
+      maxAttempts: 2,
+    });
+    expect(bounded).toMatch(/attempt\s*1\s*\/\s*2/);
+    expect(bounded).not.toMatch(/indefinite/i);
   });
 
   it('keeps OpenAI server_error / stalls transient and 401 non-transient', () => {

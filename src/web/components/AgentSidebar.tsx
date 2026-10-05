@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { getAgentMethod } from '../lib/types';
 import type { Agent } from '../lib/types';
+import { randomDesktopAgentIdentity } from '../lib/agent-name';
 
 /** Shows relative time since last activity, auto-updates every 10s */
 function LastActive({ timestamp }: { timestamp: string }) {
@@ -22,6 +23,8 @@ interface AgentSidebarProps {
   agents: Agent[];
   onSelectAgent: (agent: Agent) => void;
   onClose: () => void;
+  onAgentCreated?: (agent: Agent) => void;
+  onAgentDeleted?: (agentId: string) => void;
 }
 
 const ROLE_COLORS: Record<string, string> = {
@@ -65,8 +68,98 @@ export function AgentSidebar({
   agents,
   onSelectAgent,
   onClose,
+  onAgentCreated,
+  onAgentDeleted,
 }: AgentSidebarProps) {
   const [search, setSearch] = useState('');
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
+  const [menu, setMenu] = useState<{ x: number; y: number; agent: Agent } | null>(null);
+  useEffect(() => {
+    if (!menu) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setMenu(null);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [menu]);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  const createAgent = async () => {
+    setCreating(true);
+    setCreateError(null);
+    try {
+      for (let attempt = 0; attempt < 5; attempt += 1) {
+        const identity = randomDesktopAgentIdentity();
+        const res = await fetch('/v1/agents', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: identity.name,
+            username: identity.username,
+            role: 'agent',
+            executionMethod: 'shizuha',
+            runtimeEnvironment: 'bare_metal',
+          }),
+        });
+        if (res.status === 409) continue;
+        const text = await res.text();
+        if (!res.ok) {
+          let message = `Could not create an agent (${res.status})`;
+          try {
+            const err = JSON.parse(text) as { error?: string };
+            if (err.error) message = err.error;
+          } catch { /* keep status */ }
+          setCreateError(message);
+          return;
+        }
+        const data = JSON.parse(text) as { agent?: Agent };
+        const agent = data.agent;
+        if (!agent) {
+          setCreateError('The core created an agent but did not return it');
+          return;
+        }
+        if (agent.runtimeEnvironment && agent.runtimeEnvironment !== 'bare_metal') {
+          await fetch(`/v1/agents/${agent.id}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ runtimeEnvironment: 'bare_metal' }),
+          });
+        }
+        onAgentCreated?.(agent);
+        return;
+      }
+      setCreateError('Could not find a free name. Try again.');
+    } catch (err) {
+      setCreateError(err instanceof Error ? err.message : 'Network error');
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const deleteAgent = async (agent: Agent) => {
+    setMenu(null);
+    setDeletingId(agent.id);
+    setCreateError(null);
+    try {
+      const res = await fetch(`/v1/agents/${agent.id}`, { method: 'DELETE' });
+      if (!res.ok) {
+        const text = await res.text();
+        let message = `Could not delete ${agent.name} (${res.status})`;
+        try {
+          const err = JSON.parse(text) as { error?: string };
+          if (err.error) message = err.error;
+        } catch { /* keep status */ }
+        setCreateError(message);
+        return;
+      }
+      onAgentDeleted?.(agent.id);
+    } catch (err) {
+      setCreateError(err instanceof Error ? err.message : 'Network error');
+    } finally {
+      setDeletingId(null);
+    }
+  };
 
   const filtered = search
     ? agents.filter((a) =>
@@ -79,25 +172,39 @@ export function AgentSidebar({
   if (!isOpen) return null;
 
   return (
-    <div className="w-[85vw] max-w-[300px] flex-shrink-0 bg-zinc-900 border-r border-zinc-800 flex flex-col h-full">
+    <div className="sd-sidebar w-[85vw] max-w-[300px] flex-shrink-0 flex flex-col h-full">
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-800">
         <div>
-          <h2 className="text-sm font-semibold text-zinc-200">Agents</h2>
+          <h2 className="text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-500">Agents</h2>
           <p className="text-[10px] text-zinc-500 mt-0.5">
             {agents.filter((a) => a.status === 'running').length}/{agents.length} online
           </p>
         </div>
-        <button
-          onClick={onClose}
-          className="w-6 h-6 flex items-center justify-center text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800 rounded transition-colors cursor-pointer sm:hidden"
-          title="Close sidebar"
-        >
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={() => void createAgent()}
+            disabled={creating}
+            className="w-6 h-6 flex items-center justify-center text-cyan-200 hover:bg-white/10 rounded transition-colors cursor-pointer disabled:opacity-50"
+            title="New agent"
+          >
+            {creating ? '…' : '+'}
+          </button>
+          <button
+            onClick={onClose}
+            className="w-6 h-6 flex items-center justify-center text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800 rounded transition-colors cursor-pointer lg:hidden"
+            title="Close sidebar"
+          >
           <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
             <path d="M10.5 3.5L3.5 10.5M3.5 3.5L10.5 10.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
           </svg>
-        </button>
+          </button>
+        </div>
       </div>
+      {createError && (
+        <p className="px-4 py-2 text-[11px] text-red-300" role="alert">{createError}</p>
+      )}
 
       {/* Search */}
       {agents.length > 5 && (
@@ -131,6 +238,14 @@ export function AgentSidebar({
             <button
               key={agent.id}
               onClick={() => onSelectAgent(agent)}
+              onContextMenu={(event) => {
+                event.preventDefault();
+                const width = 180;
+                const height = 44;
+                const x = Math.max(8, Math.min(event.clientX, window.innerWidth - width - 8));
+                const y = Math.max(8, Math.min(event.clientY, window.innerHeight - height - 8));
+                setMenu({ x, y, agent });
+              }}
               className={[
                 'w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors cursor-pointer mt-0.5',
                 isSelected
@@ -160,7 +275,7 @@ export function AgentSidebar({
                   <span className="text-zinc-700">·</span>
                   <span className="text-[10px] text-zinc-600 font-mono truncate">{getAgentMethod(agent)}</span>
                   {agent.runtimeEnvironment === 'bare_metal' ? (
-                    <span className="text-[8px] px-1 rounded bg-red-500/20 text-red-400" title="Running on bare metal (no isolation)">bare</span>
+                    <span className="text-[8px] px-1 rounded bg-white/10 text-zinc-300" title="Runs on this Mac">host</span>
                   ) : agent.runtimeEnvironment === 'container' ? (
                     <span className="text-[8px] px-1 rounded bg-emerald-500/15 text-emerald-500" title="Running in isolated container">⬡</span>
                   ) : null}
@@ -176,6 +291,32 @@ export function AgentSidebar({
           );
         })}
       </div>
+      {menu && (
+        <>
+          <button
+            type="button"
+            className="fixed inset-0 z-40 cursor-default"
+            aria-label="Close menu"
+            onClick={() => setMenu(null)}
+            onContextMenu={(event) => { event.preventDefault(); setMenu(null); }}
+          />
+          <div
+            role="menu"
+            className="fixed z-50 min-w-[11rem] rounded-lg border border-white/10 bg-zinc-900/95 py-1 text-sm shadow-2xl backdrop-blur"
+            style={{ left: menu.x, top: menu.y }}
+          >
+            <button
+              type="button"
+              role="menuitem"
+              disabled={deletingId === menu.agent.id}
+              onClick={() => void deleteAgent(menu.agent)}
+              className="w-full px-3 py-1.5 text-left text-red-300 hover:bg-white/10 cursor-pointer disabled:opacity-50"
+            >
+              {deletingId === menu.agent.id ? 'Deleting…' : `Delete ${menu.agent.name}`}
+            </button>
+          </div>
+        </>
+      )}
     </div>
   );
 }

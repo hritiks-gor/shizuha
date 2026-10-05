@@ -1,3 +1,6 @@
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import { describe, it, expect, vi } from 'vitest';
 import {
   GrokVoiceProvider,
@@ -9,6 +12,7 @@ import {
   RealtimeTurnAccumulator,
   classifyGrokVoiceFailure,
   GROK_VOICE_CREDITS_MESSAGE,
+  grokVoiceAuthConfigured,
   isUsableGrokVoiceBearer,
   resolveGrokVoiceAuth,
   trailingToolResults,
@@ -340,6 +344,53 @@ describe('resolveGrokVoiceAuth', () => {
       else process.env['CORTEX_API_KEY'] = prevKey;
       if (prevBase === undefined) delete process.env['CORTEX_BASE_URL'];
       else process.env['CORTEX_BASE_URL'] = prevBase;
+    }
+  });
+
+  it('mints from the stored Cortex key when the agent env has none', async () => {
+    const prevHome = process.env['HOME'];
+    const prevKey = process.env['CORTEX_API_KEY'];
+    const prevOauth = process.env['CORTEX_OAUTH_TOKEN'];
+    const prevXai = process.env['XAI_API_KEY'];
+    const prevBase = process.env['CORTEX_BASE_URL'];
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'grok-voice-stored-'));
+    fs.mkdirSync(path.join(dir, '.shizuha'), { recursive: true });
+    fs.writeFileSync(path.join(dir, '.shizuha', 'credentials.json'), JSON.stringify({
+      cortex: { apiKey: 'sk-cortex-stored', baseUrl: 'https://cortex.example' },
+    }));
+    process.env['HOME'] = dir;
+    delete process.env['CORTEX_API_KEY'];
+    delete process.env['CORTEX_OAUTH_TOKEN'];
+    delete process.env['XAI_API_KEY'];
+    delete process.env['CORTEX_BASE_URL'];
+    try {
+      expect(grokVoiceAuthConfigured()).toBe(true);
+      expect(grokVoiceAuthConfigured({})).toBe(false);
+      const fetchImpl = vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({ access_token: 'eph-stored' }),
+      }));
+      const auth = await resolveGrokVoiceAuth({
+        model: 'cortex/grok-voice-think-fast-2.0',
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+      });
+      expect(auth.token).toBe('eph-stored');
+      const [url, init] = fetchImpl.mock.calls[0]!;
+      expect(String(url)).toBe('https://cortex.example/v1/audio/realtime/stream-session');
+      expect((init as RequestInit).headers).toMatchObject({ Authorization: 'Bearer sk-cortex-stored' });
+    } finally {
+      if (prevHome === undefined) delete process.env['HOME'];
+      else process.env['HOME'] = prevHome;
+      if (prevKey === undefined) delete process.env['CORTEX_API_KEY'];
+      else process.env['CORTEX_API_KEY'] = prevKey;
+      if (prevOauth === undefined) delete process.env['CORTEX_OAUTH_TOKEN'];
+      else process.env['CORTEX_OAUTH_TOKEN'] = prevOauth;
+      if (prevXai === undefined) delete process.env['XAI_API_KEY'];
+      else process.env['XAI_API_KEY'] = prevXai;
+      if (prevBase === undefined) delete process.env['CORTEX_BASE_URL'];
+      else process.env['CORTEX_BASE_URL'] = prevBase;
+      fs.rmSync(dir, { recursive: true, force: true });
     }
   });
 });

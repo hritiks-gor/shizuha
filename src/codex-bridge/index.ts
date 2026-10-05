@@ -19,6 +19,7 @@ import * as path from 'node:path';
 import { readCodexAccounts } from '../config/credentials.js';
 import type { CodexAccountEntry } from '../config/credentials.js';
 import { fetchBrokerModelToken, reportBrokerModelTokenStatus, brokerExpected, type BrokerModelToken } from '../auth/broker-token.js';
+import { GPT6_CATALOG_MAX_CONTEXT_WINDOW, isGpt6CatalogModel } from '../provider/context-window.js';
 import Fastify, { type FastifyInstance } from 'fastify';
 import cors from '@fastify/cors';
 // @ts-ignore — ws has no declaration file
@@ -622,6 +623,11 @@ export function buildGptCodexProviderArgs(
     '-c', 'model_providers.chatgpt-http.requires_openai_auth=true',
     '-c', 'model_providers.chatgpt-http.supports_websockets=false',
   );
+  // Opt into the catalog max. The bundled default is 272000; a 1_050_000 value
+  // is clamped by this Codex build. gpt-5 stays on its 272k catalog max.
+  if (isGpt6CatalogModel(model)) {
+    args.push('-c', `model_context_window=${GPT6_CATALOG_MAX_CONTEXT_WINDOW}`);
+  }
   return args;
 }
 
@@ -2212,11 +2218,10 @@ export class CodexBridge {
         const brokerToken = await fetchBrokerModelToken(
           'openai',
           8000,
-          {
+          this.brokerTokenOptions({
             forceRefresh: true,
             preferredEntryId: previousEntryId,
-            stickyKey: this.brokerStickyKey(),
-          },
+          }),
         );
         const brokerPayload = brokerToken ? parseBrokerCodexPayload(brokerToken.token) : null;
         if (!brokerToken || !brokerPayload) {
@@ -2723,7 +2728,12 @@ export class CodexBridge {
         }
         // Persist this turn's deltas and bump turn_count. App-server usage is
         // thread-cumulative, while StateStore is lifetime-incremental.
-        this.store.updateTokens(this.sessionId, this.lastTurnBilledInputTokens, this.lastTurnOutputTokens);
+        this.store.updateTokens(
+          this.sessionId,
+          this.lastTurnBilledInputTokens,
+          this.lastTurnOutputTokens,
+          this.activeTurnCachedInputTokens === null ? undefined : this.activeTurnCachedInputTokens,
+        );
 
         const completedHeartbeat = this.activeTurnIsHeartbeat;
         let continueHeartbeatDrain = false;
@@ -3493,6 +3503,9 @@ export class CodexBridge {
   /** Approximate model context-window size (tokens) for the context% gauge. */
   private modelMaxTokens(): number {
     const m = (this.opts.model || '').toLowerCase();
+    // Catalog max before the "1m" name heuristic. A gpt-6 id that also says 1m
+    // still plans at 872k; chatgpt.com/backend-api/codex clamps a 1_000_000 override.
+    if (m.startsWith('gpt-6')) return GPT6_CATALOG_MAX_CONTEXT_WINDOW;
     if (m.includes('1m') || m.includes('-1m')) return 1_000_000;
     if (m.startsWith('claude')) return 200_000;
     if (m.startsWith('gpt-5') || m.startsWith('o3') || m.startsWith('o4')) return 272_000;
@@ -4761,6 +4774,19 @@ ${envLines}
     return `agent:${process.env['AGENT_USERNAME'] || this.opts.agentUsername || 'default'}`;
   }
 
+  private brokerTokenOptions(extra: {
+    forceRefresh?: boolean;
+    preferredEntryId?: string;
+    excludeEntryId?: string;
+  } = {}) {
+    const model = (this.opts.model || '').trim();
+    return {
+      stickyKey: this.brokerStickyKey(),
+      ...(model ? { model } : {}),
+      ...extra,
+    };
+  }
+
   private clearBrokerCodexAuthCache(agentAuthFile: string): void {
     try {
       if (fs.existsSync(agentAuthFile)) {
@@ -4784,7 +4810,7 @@ ${envLines}
       const brokerToken = await fetchBrokerModelToken(
         'openai',
         5000,
-        { stickyKey: this.brokerStickyKey() },
+        this.brokerTokenOptions(),
       );
       const brokerPayload = brokerToken ? parseBrokerCodexPayload(brokerToken.token) : null;
       if (brokerPayload) {
@@ -4826,7 +4852,7 @@ ${envLines}
           const retryToken = await fetchBrokerModelToken(
             'openai',
             5000,
-            { stickyKey: this.brokerStickyKey() },
+            this.brokerTokenOptions(),
           );
           const retryPayload = retryToken ? parseBrokerCodexPayload(retryToken.token) : null;
           if (retryPayload) {
@@ -5135,10 +5161,7 @@ ${envLines}
     const brokerToken = await fetchBrokerModelToken(
       'openai',
       5000,
-      {
-        stickyKey: this.brokerStickyKey(),
-        ...(excludeEntryId ? { excludeEntryId } : {}),
-      },
+      this.brokerTokenOptions(excludeEntryId ? { excludeEntryId } : {}),
     );
     const brokerPayload = brokerToken ? parseBrokerCodexPayload(brokerToken.token) : null;
     if (!brokerPayload) return false;

@@ -89,4 +89,74 @@ describe('RuntimeLane in-pod health correlation', () => {
       true,
     )).toMatchObject({ apply_status: 'failed', error: 'runtime_lane_fence_mismatch' });
   });
+
+  // SCLI-386: an admitted `cortex/*` lane model must correlate healthy with the
+  // runtime's canonical unprefixed model ID (the runtime reports
+  // `DeepSeek-V4-Flash`, not `cortex/DeepSeek-V4-Flash`).
+  it('correlates an admitted cortex/* model healthy against the canonical runtime model', () => {
+    const laneContext = {
+      ...context,
+      runtimeLane: {
+        execution_method: 'codex_app_server',
+        model: 'cortex/DeepSeek-V4-Flash',
+        primary: { provider: 'cortex', model_id: 'DeepSeek-V4-Flash' },
+      },
+    };
+    const laneProbe = probe({ model: 'DeepSeek-V4-Flash' });
+    expect(runtimeLaneHealthFromProbe(laneContext, laneProbe, true, true)).toMatchObject({
+      apply_status: 'ok',
+      harness_ready: true,
+    });
+  });
+
+  it('correlates nested cortex/xai/grok-4.7 against the unstripped runtime id', () => {
+    const laneContext = {
+      ...context,
+      runtimeLane: {
+        execution_method: 'codex_app_server',
+        model: 'cortex/xai/grok-4.7',
+        primary: { provider: 'cortex', model_id: 'xai/grok-4.7' },
+      },
+    };
+    expect(runtimeLaneHealthFromProbe(
+      laneContext,
+      probe({ model: 'xai/grok-4.7' }),
+      true,
+      true,
+    )).toMatchObject({ apply_status: 'ok', harness_ready: true });
+  });
+
+  it('does not equate differently-prefixed identities', () => {
+    const laneContext = {
+      ...context,
+      runtimeLane: {
+        execution_method: 'codex_app_server',
+        model: 'cortex/X',
+        primary: { provider: 'cortex', model_id: 'X' },
+      },
+    };
+    expect(runtimeLaneHealthFromProbe(
+      laneContext,
+      probe({ model: 'openai/X' }),
+      true,
+      true,
+    )).toMatchObject({ apply_status: 'failed', error: 'runtime_model_mismatch' });
+  });
+
+  it('still rejects a genuinely different model as a runtime_model_mismatch', () => {
+    const laneContext = {
+      ...context,
+      runtimeLane: {
+        execution_method: 'codex_app_server',
+        model: 'cortex/DeepSeek-V4-Flash',
+        primary: { provider: 'cortex', model_id: 'DeepSeek-V4-Flash' },
+      },
+    };
+    const laneProbe = probe({ model: 'cortex/Grok-4.5' });
+    expect(runtimeLaneHealthFromProbe(laneContext, laneProbe, true, true)).toMatchObject({
+      apply_status: 'failed',
+      harness_ready: false,
+      error: 'runtime_model_mismatch',
+    });
+  });
 });

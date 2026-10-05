@@ -69,6 +69,14 @@ describe('PLAT-4205 buildGptCodexProviderArgs', () => {
     expect(args.length % 2).toBe(0);
     for (let i = 0; i < args.length; i += 2) expect(args[i]).toBe('-c');
   });
+
+  it('gpt-6-astra opts into the catalog max; gpt-5 does not', () => {
+    expect(buildGptCodexProviderArgs('gpt-6-astra', null).join(' ')).toContain('model_context_window=872000');
+    expect(buildGptCodexProviderArgs('gpt-5.6-sol', null).join(' ')).not.toContain('model_context_window');
+    const pairs = buildGptCodexProviderArgs('gpt-6-sol', null);
+    expect(pairs.length % 2).toBe(0);
+    for (let i = 0; i < pairs.length; i += 2) expect(pairs[i]).toBe('-c');
+  });
 });
 
 describe('PLAT-4205 ensureGptStaticCatalog (production paths)', () => {

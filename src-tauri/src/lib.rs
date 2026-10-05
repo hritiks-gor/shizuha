@@ -1,7 +1,7 @@
 mod core;
 mod health;
 
-use core::{start_core as spawn_core, StartCoreResult};
+use core::{desktop_bridge as open_bridge, start_core as spawn_core, StartCoreResult};
 use health::{check_core_health, HealthResult};
 
 /// Tauri command: check the health of the local Shizuha agent core.
@@ -19,10 +19,16 @@ fn start_core() -> StartCoreResult {
     spawn_core()
 }
 
+/// Open the IPv4 bridge to the ::1 daemon and return its URL in `message`.
+#[tauri::command]
+fn desktop_bridge() -> StartCoreResult {
+    open_bridge()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![core_health, start_core])
+        .invoke_handler(tauri::generate_handler![core_health, start_core, desktop_bridge])
         .run(tauri::generate_context!())
         .expect("error while running Shizuha desktop app");
 }

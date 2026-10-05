@@ -22,7 +22,7 @@ shizuha desktop
 
 Click **Live**. Grant the microphone. Speak. The HUD should go Connecting → Listening.
 
-Typed chat still uses whatever model you picked (Claude, Codex, grok-4.6, Ollama…). Live overlays `grok-voice-think-fast-2.0` for the call only.
+Typed chat still uses whatever model you picked (Claude, Codex, grok-4.7, Ollama…). Live overlays `grok-voice-think-fast-2.0` for the call only.
 
 ## Native app (Windows / macOS / Linux)
 

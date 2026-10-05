@@ -25,6 +25,8 @@ export interface Session {
   messages: Message[];
   totalInputTokens: number;
   totalOutputTokens: number;
+  /** Sum of reported cached input tokens. Absent on rows written before the column existed. */
+  totalCacheReadTokens?: number;
   turnCount: number;
   interruptCheckpoint?: InterruptCheckpoint;
 }

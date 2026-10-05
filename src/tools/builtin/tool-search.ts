@@ -197,7 +197,9 @@ export const toolSearchTool: ToolHandler = {
     're-select any time you need a schema again (selection is cheap).',
   parameters: z.object({
     query: z.string().min(1).describe('Query to find deferred tools. Use "select:<tool_name>" for direct selection, or keywords to search.'),
-    max_results: z.number().int().positive().optional().default(3).describe('Maximum number of results to return (default: 3)'),
+    // .min(1), not .positive(): openApi3 emits exclusiveMinimum:true, which
+    // ChatGPT rejects ("True is not of type 'number'"). Integers >= 1 match.
+    max_results: z.number().int().min(1).optional().default(3).describe('Maximum number of results to return (default: 3)'),
   }),
   readOnly: true,
   riskLevel: 'low',

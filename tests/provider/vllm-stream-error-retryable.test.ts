@@ -131,6 +131,15 @@ describe('VLlmProvider Cortex SSE stream error retryability', () => {
     })).toBe(false);
   });
 
+  it('does not retry a 400 that the chat list ends in two assistant messages', () => {
+    expect(isTransientProviderFailure({
+      message: 'Cortex stream error: Cannot have 2 or more assistant messages at the end of the list. (code: 400)',
+      code: '400',
+      status: 400,
+      retryable: true,
+    })).toBe(false);
+  });
+
   it('marks OpenAI server_error as retryable even without retryable flag', async () => {
     const caught = await throwFromStreamError({
       message:

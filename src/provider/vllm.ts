@@ -716,6 +716,41 @@ export function filterSalvagedGlmToolCalls<T extends { name: string }>(
 }
 
 /**
+ * A streamed tool-call delta that reuses an index but carries a different id
+ * or a different function name is a new call, not a continuation.
+ *
+ * vLLM/glm47 sometimes resets `index` to 0 for the next invocation. Appending
+ * those arguments onto the open builder fuses two calls into one payload
+ * (PLAT-10180 mega-blob / dup-name class). Same id and same (or empty) name
+ * remain continuations — that is the normal chunked-arguments shape.
+ */
+export function streamedToolCallIdentityChanged(
+  builder: { id: string; name: string },
+  delta: { id?: string; function?: { name?: string } },
+): boolean {
+  const incomingId = (delta.id ?? '').trim();
+  if (incomingId && incomingId !== builder.id) return true;
+  const incomingName = (delta.function?.name ?? '').replace(/<\/?[a-z0-9_]+>/gi, '').trim();
+  if (incomingName && builder.name && incomingName !== builder.name) return true;
+  return false;
+}
+
+/**
+ * Id for a builder that is starting after an index split (or as the first
+ * chunk). A same-id name change must not reuse the parked call's id:
+ * `pendingToolInputs` is keyed by id, so a collision drops the parked call
+ * (PLAT-10180 review 5741).
+ */
+export function streamedToolCallIdForNewBuilder(
+  parked: { id: string } | undefined,
+  incomingId: string | undefined,
+): string {
+  const id = (incomingId ?? '').trim();
+  if (id && (!parked || id !== parked.id)) return id;
+  return `vllm_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+/**
  * vLLM #44104 / #44326: streaming chunks often carry `delta.tool_calls: []`
  * (empty) next to content, or glm47 swallows inline zero-arg
  * `<tool_call>name</tool_call>` and never emits a real delta. Treating a
@@ -949,6 +984,17 @@ export function salvageGlmToolCall(
   }
 
   return Object.keys(args).length > 0 ? { name, args } : null;
+}
+
+/**
+ * Name to dispatch. A registered name is kept. An unknown name that starts
+ * with a registered tool (args welded on, PLAT-10180) is split. Otherwise
+ * the raw name is returned so the caller still fails closed on a real miss.
+ */
+export function dispatchToolName(rawName: string, knownTools: string[]): string {
+  const name = (rawName ?? '').trim();
+  if (!name || knownTools.includes(name)) return name;
+  return repairFusedToolName(name, knownTools) ?? name;
 }
 
 /**
@@ -3424,8 +3470,21 @@ export class VLlmProvider implements LLMProvider {
             lastVisibleCompletionTokens = completionTokens;
             for (const tc of choice.delta.tool_calls!) {
               const idx = tc.index;
+              const open = toolCallBuilders.get(idx);
+              const rawIncomingName = (tc.function?.name ?? '').replace(/<\/?[a-z0-9_]+>/gi, '').trim();
+              const resolvedIncomingName = reverseAliases[rawIncomingName] ?? rawIncomingName;
+              if (open && streamedToolCallIdentityChanged(open, {
+                id: tc.id,
+                function: { name: resolvedIncomingName },
+              })) {
+                // Park the finished call so finish-reason emission still sees it.
+                let parked = 1000 + toolCallBuilders.size;
+                while (toolCallBuilders.has(parked)) parked += 1;
+                toolCallBuilders.set(parked, open);
+                toolCallBuilders.delete(idx);
+              }
               if (!toolCallBuilders.has(idx)) {
-                const id = tc.id ?? `vllm_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+                const id = streamedToolCallIdForNewBuilder(open, tc.id);
                 // SCLI-54: glm47 parser leaks XML tag fragments (e.g. `pulse_get_task</arg_value>`)
                 // into the streamed function name → no tool matches → loop-break churn. Strip them.
                 const rawName = (tc.function?.name ?? '').replace(/<\/?[a-z0-9_]+>/gi, '').trim();

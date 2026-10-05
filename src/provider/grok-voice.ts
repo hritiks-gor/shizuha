@@ -1,5 +1,6 @@
 // @ts-ignore — this repo does not ship @types/ws (same as connect-client)
 import WebSocket from 'ws';
+import { readCredentials } from '../config/credentials.js';
 import type { ToolDefinition } from '../tools/types.js';
 import type {
   ChatContentBlock,
@@ -10,6 +11,7 @@ import type {
   LLMProvider,
   StreamChunk,
 } from './types.js';
+import { usageCacheFromRecord } from './usage-cache.js';
 
 /**
  * Grok Voice Think Fast — Speech-to-Speech realtime adapter for SCLI.
@@ -338,11 +340,13 @@ export class RealtimeTurnAccumulator {
         this.inputTokens = Number(usage.input_tokens ?? usage.prompt_tokens ?? 0) || 0;
         this.outputTokens = Number(usage.output_tokens ?? usage.completion_tokens ?? 0) || 0;
       }
-      if (this.inputTokens || this.outputTokens) {
+      const cache = usageCacheFromRecord(usage);
+      if (this.inputTokens || this.outputTokens || cache.cacheReadInputTokens != null || cache.cacheCreationInputTokens != null) {
         chunks.push({
           type: 'usage',
           inputTokens: this.inputTokens,
           outputTokens: this.outputTokens,
+          ...cache,
         });
       }
       chunks.push({ type: 'done' });
@@ -402,6 +406,18 @@ export class GrokVoiceAuthError extends Error {
   }
 }
 
+function storedCortexCredential(): { apiKey: string; baseUrl?: string } {
+  try {
+    const cortex = readCredentials().cortex;
+    return {
+      apiKey: (cortex?.apiKey || '').trim(),
+      ...(cortex?.baseUrl ? { baseUrl: cortex.baseUrl } : {}),
+    };
+  } catch {
+    return { apiKey: '' };
+  }
+}
+
 /** True when this process can mint a Grok Voice realtime session. */
 export function grokVoiceAuthConfigured(env: NodeJS.ProcessEnv = process.env): boolean {
   const xai = (env['XAI_API_KEY'] ?? '').trim();
@@ -411,7 +427,11 @@ export function grokVoiceAuthConfigured(env: NodeJS.ProcessEnv = process.env): b
     ?? env['CORTEX_OAUTH_TOKEN']
     ?? ''
   ).trim();
-  return Boolean(cortex);
+  if (cortex && isUsableGrokVoiceBearer(cortex)) return true;
+  // An explicit env object is a unit fixture. The live process also sees
+  // the desktop Cortex key written by Shizuha ID sign-in.
+  if (env !== process.env) return false;
+  return isUsableGrokVoiceBearer(storedCortexCredential().apiKey);
 }
 
 export function isUsableGrokVoiceBearer(token: string): boolean {
@@ -457,15 +477,18 @@ export async function resolveGrokVoiceAuth(opts: {
     }
     return { token: xai, url: GROK_VOICE_REALTIME_URL, model };
   }
+  const stored = storedCortexCredential();
   const cortexToken = (
     opts.cortexToken
     ?? process.env['CORTEX_API_KEY']
     ?? process.env['CORTEX_OAUTH_TOKEN']
+    ?? stored.apiKey
     ?? ''
   ).trim();
   const cortexBase = (
     opts.cortexBaseUrl
     ?? process.env['CORTEX_BASE_URL']
+    ?? stored.baseUrl
     ?? 'https://cortex.shizuha.com'
   ).replace(/\/+$/, '').replace(/\/v1$/, '');
   if (!cortexToken) {

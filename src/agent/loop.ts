@@ -38,7 +38,6 @@ import { BackgroundTaskRegistry } from '../tasks/registry.js';
 import { executeTurn } from './turn.js';
 import {
   hasVisibleAssistantText,
-  isProgressOnlyAssistantText,
   reasoningTextFromContent,
   strippedVisibleTextFromContent,
   visibleTextFromContent,
@@ -925,9 +924,9 @@ export async function* runAgent(agentConfig: AgentConfig, initialPrompt?: string
       // SCLI-182: remember the real prompt size for the next pre-turn gate.
       if (result.inputTokens > 0) lastReportedPromptTokens = result.inputTokens;
       if (result.providerPromptEstimate != null && result.providerPromptEstimate > 0) lastProviderPromptEstimate = result.providerPromptEstimate;
-      if (result.cacheCreationInputTokens) totalCacheCreationInputTokens += result.cacheCreationInputTokens;
-      if (result.cacheReadInputTokens) totalCacheReadInputTokens += result.cacheReadInputTokens;
-      store.updateTokens(session.id, result.inputTokens, result.outputTokens);
+      if (typeof result.cacheCreationInputTokens === 'number') totalCacheCreationInputTokens += result.cacheCreationInputTokens;
+      if (typeof result.cacheReadInputTokens === 'number') totalCacheReadInputTokens += result.cacheReadInputTokens;
+      store.updateTokens(session.id, result.inputTokens, result.outputTokens, result.cacheReadInputTokens);
 
       // Compact every completed subturn before any continuation/break decision.
       // In particular, a text-only final used to break above the old post-turn
@@ -1250,23 +1249,6 @@ export async function* runAgent(agentConfig: AgentConfig, initialPrompt?: string
             store.appendMessage(session.id, nudgeMsg);
             continue;
           }
-        }
-        if (hasActionableText && permissionMode !== 'plan' && isProgressOnlyAssistantText(strippedContent)) {
-          if (progressOnlyRecoveryCount < MAX_PROGRESS_ONLY_RECOVERY) {
-            progressOnlyRecoveryCount++;
-            logger.warn(
-              { turnIndex, attempt: progressOnlyRecoveryCount, text: strippedContent.slice(0, 240) },
-              'SCLI: progress-only assistant narration without tool call — continuing from prefix (no user lecture)',
-            );
-            // The assistant progress line is already on `messages`. A "you
-            // narrated progress" user lecture is the policy layer the
-            // operator rejected (2026-09-10 shizuha1). Continue generation.
-            continue;
-          }
-          logger.warn(
-            { turnIndex, attempts: progressOnlyRecoveryCount, text: strippedContent.slice(0, 240) },
-            'SCLI: model stopped after progress-only narration without calling a tool',
-          );
         }
         break;
       }

@@ -10,6 +10,8 @@ import { OpenAIProvider } from './openai.js';
  * context window (128K) and the undersized DEFAULT model profile.
  */
 const GROK_CONTEXT: Record<string, number> = {
+  'grok-4.7': 500000,
+  'grok-4.7-latest': 500000,
   'grok-4.6': 500000,
   'grok-4.6-latest': 500000,
   'grok-4.5': 500000,

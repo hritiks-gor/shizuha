@@ -733,11 +733,11 @@ export class ProviderRegistry {
     }
 
     // ChatGPT Responses API models route to codex provider when available.
-    // This includes: gpt-5.x (all variants) and gpt-oss-*.
+    // This includes gpt-5.x, gpt-6.x (Astra), and gpt-oss-*.
     // These use chatgpt.com/backend-api/codex, NOT OpenAI Chat Completions.
-    // gpt-4.x models (gpt-4.1, gpt-4o, etc.) are standard OpenAI API models.
-    // codex-mini-latest is also a standard OpenAI model.
-    if (model.startsWith('gpt-5') || model.startsWith('gpt-oss-')) {
+    // A fleet OPENAI_API_KEY is often a Cortex key; sending gpt-6-astra there
+    // is a 401, not a model call. gpt-4.x stays on the OpenAI API.
+    if (model.startsWith('gpt-5') || model.startsWith('gpt-6') || model.startsWith('gpt-oss-')) {
       if (this.providers.has('codex')) {
         return { provider: this.providers.get('codex')!, resolvedModel: model };
       }

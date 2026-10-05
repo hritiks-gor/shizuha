@@ -137,6 +137,7 @@ describe('CLI E2E tests (dist/shizuha.js)', () => {
   });
 
   describe('bridge --cwd fail-fast boundary (SCLI-493 / SCLI-529)', () => {
+    // 3 commands x 6 cwd labels, each allowed 5s. The 30s default aborts the loop before the last spawn asserts.
     it('rejects every invalid cwd at both CLI commands with one exact-line diagnostic and no startup state', async () => {
       const root = fs.mkdtempSync(path.join(os.tmpdir(), 'scli529-cli-cwd-'));
       try {
@@ -164,7 +165,7 @@ describe('CLI E2E tests (dist/shizuha.js)', () => {
       } finally {
         fs.rmSync(root, { recursive: true, force: true });
       }
-    });
+    }, 120_000);
 
     it('rejects every invalid cwd at both exported entrypoints before logs, listeners, or state', async () => {
       const previousGatewayPassword = process.env['GATEWAY_PASSWORD'];
@@ -404,6 +405,7 @@ describe('CLI E2E tests (dist/shizuha.js)', () => {
       expect(stdout).toContain('--json');
     });
 
+    // 12 serial CLI spawns, each allowed the 15s runCli default.
     it('rejects malformed pulse list options locally before any daemon request (SCLI-446)', async () => {
       // Point at an unbound port so any request would surface ECONNREFUSED.
       // The whole point: invalid options must reject with a NAMED diagnostic,
@@ -434,7 +436,7 @@ describe('CLI E2E tests (dist/shizuha.js)', () => {
         expect(all, `${label} must name the option`).toMatch(/--(status|assignee|priority|limit)/);
         expect(all, `${label} must not be a raw connection failure`).not.toMatch(/ECONNREFUSED|ERR_SOCKET|node:/);
       }
-    });
+    }, 190_000);
 
     it('preserves valid pulse list options through to the request (SCLI-446)', async () => {
       // A scoped loopback daemon captures the exact query. Only valid options

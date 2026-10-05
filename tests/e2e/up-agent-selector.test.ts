@@ -178,15 +178,15 @@ describe('SCLI-563: shizuha up --agent selector validation (black-box dist)', ()
       const r = await runUp([], { timeoutMs: 6000 });
       expect(r.timedOut).toBe(true); // daemon runs until killed
       expect(r.stdout).toContain('Shizuha Runtime v0.1.0');
-      expect(r.stdout).toContain('created 4 default agents');
+      expect(r.stdout).toContain('created 1 default agents (Shizuha).');
       expect(r.stderr).not.toContain('Invalid --agent value');
     });
 
     it('a matching valid selector is scoped to that agent', async () => {
-      const r = await runUp(['--agent', 'claude'], { timeoutMs: 6000 });
+      const r = await runUp(['--agent', 'shizuha'], { timeoutMs: 6000 });
       expect(r.timedOut).toBe(true);
       expect(r.stdout).toContain('Shizuha Runtime v0.1.0');
-      expect(r.stdout).toContain('created 4 default agents');
+      expect(r.stdout).toContain('created 1 default agents (Shizuha).');
       expect(r.stderr).not.toContain('Invalid --agent value');
       expect(r.stderr).not.toContain('No agents match filter');
     });

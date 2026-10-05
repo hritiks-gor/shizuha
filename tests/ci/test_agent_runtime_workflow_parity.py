@@ -1,6 +1,9 @@
 """Canonical agent-runtime workflow safety and release-authority parity."""
 from pathlib import Path
 import json
+import os
+import subprocess
+import textwrap
 import unittest
 
 from tests.ci.test_runtime_release_concurrency import RuntimeReleaseConcurrencyTests
@@ -12,6 +15,54 @@ DOCKERFILE = ROOT / "Dockerfile.agent-runtime"
 
 
 class AgentRuntimeWorkflowParityTests(unittest.TestCase):
+    def test_actual_native_builder_render_allows_repaired_i9_path(self):
+        from tests.ci._mini_yaml import loads
+        text = WORKFLOW.read_text()
+        start = text.index("          render_build_job() {")
+        end = text.index("\n          }", start) + len("\n          }")
+        renderer = textwrap.dedent(text[start:end])
+        env = os.environ | {"CANDIDATE_TAG": "candidate-123", "SOURCE_SHA": "a" * 40,
+                            "SKILLS_SHA": "b" * 40, "REG": "registry.example.org", "IMG": "runtime"}
+        output = subprocess.check_output(["bash", "-c", renderer + "\nrender_build_job amd64"],
+                                         text=True, env=env)
+        lines = output.splitlines()
+        first = next(i for i, line in enumerate(lines) if line.strip().startswith("nodeSelector:"))
+        last = next(i for i, line in enumerate(lines[first:], first) if line.strip() == "initContainers:")
+        scheduling = textwrap.dedent("\n".join(lines[first:last]))
+        selector_line = next(line for line in scheduling.splitlines() if line.startswith("nodeSelector:"))
+        selector = loads(selector_line)["nodeSelector"]
+        required = scheduling.split("requiredDuringSchedulingIgnoredDuringExecution:", 1)[1]
+        rules = [loads("rule: " + line.strip()[2:])["rule"]
+                 for line in required.splitlines() if line.strip().startswith("- {")]
+        tolerations = [loads("rule: " + line.strip()[2:])["rule"]
+                       for line in scheduling.split("affinity:", 1)[0].splitlines()
+                       if line.strip().startswith("- {")]
+        def eligible(labels):
+            if any(labels.get(key) != value for key, value in selector.items()):
+                return False
+            def matches(rule):
+                if rule["operator"] == "DoesNotExist":
+                    return rule["key"] not in labels
+                if rule["operator"] == "NotIn":
+                    return labels.get(rule["key"]) not in rule["values"]
+                raise AssertionError("Unreviewed scheduling operator")
+            return all(matches(rule) for rule in rules)
+        i9 = {"kubernetes.io/arch": "amd64", "kubernetes.io/hostname": "i9-ws"}
+        self.assertTrue(eligible(i9), "repaired native builder must no longer be excluded")
+        s1 = i9 | {"kubernetes.io/hostname": "s1"}
+        self.assertTrue(eligible(s1), "busy host remains fallback capacity")
+        preferred = scheduling.split("preferredDuringSchedulingIgnoredDuringExecution:", 1)[1].split("requiredDuringSchedulingIgnoredDuringExecution:", 1)[0]
+        preferences = [loads("rule: " + line.strip()[2:])["rule"]
+                       for line in preferred.splitlines() if line.strip().startswith("- {")]
+        self.assertEqual(len(preferences), 1)
+        preference = preferences[0]
+        self.assertEqual(preference["operator"], "NotIn")
+        self.assertNotIn(i9[preference["key"]], preference["values"])
+        self.assertIn(s1[preference["key"]], preference["values"])
+        self.assertFalse(eligible(i9 | {"kubernetes.io/arch": "arm64"}))
+        self.assertFalse(eligible(i9 | {"node-role.kubernetes.io/control-plane": "true"}))
+        self.assertIn({"key": "node.shizuha/workstation", "operator": "Exists", "effect": "NoSchedule"}, tolerations)
+
     def test_harness_release_metadata_authority_and_install_cache(self):
         text = WORKFLOW.read_text()
         self.assertIn('NPM_META_REG="https://registry.npmjs.org"', text)

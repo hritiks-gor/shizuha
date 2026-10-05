@@ -25,6 +25,7 @@ import cors from '@fastify/cors';
 import { WebSocketServer, WebSocket } from 'ws';
 import { resolveBrowserMcpServer } from '../browser-mcp.js';
 import { StateStore } from '../state/store.js';
+import { usageCacheFromRecord } from '../provider/usage-cache.js';
 import {
   brokerExpected,
   fetchBrokerModelToken,
@@ -191,6 +192,8 @@ export class AntigravityBridge {
 
   private totalInputTokens = 0;
   private totalOutputTokens = 0;
+  private totalCacheReadTokens = 0;
+  private cacheReadMeasured = false;
   private turnCount = 0;
   private totalOutputChars = 0;
   private lastActivityAt = Date.now();
@@ -539,6 +542,7 @@ export class AntigravityBridge {
       usage: {
         total_input_tokens: this.totalInputTokens,
         total_output_tokens: this.totalOutputTokens,
+        ...(this.cacheReadMeasured ? { total_cache_read_tokens: this.totalCacheReadTokens } : {}),
         total_output_chars: this.totalOutputChars,
         turns: this.turnCount,
         tokens_per_sec: tokensPerSecond,
@@ -1166,6 +1170,11 @@ export class AntigravityBridge {
     if (usage) {
       this.totalInputTokens += Number(usage.input_tokens ?? usage.inputTokens ?? 0) || 0;
       this.totalOutputTokens += Number(usage.output_tokens ?? usage.outputTokens ?? 0) || 0;
+      const cache = usageCacheFromRecord(usage);
+      if (cache.cacheReadInputTokens !== undefined) {
+        this.cacheReadMeasured = true;
+        this.totalCacheReadTokens += cache.cacheReadInputTokens;
+      }
     }
 
     // Terminal result event with aggregated text
@@ -1260,6 +1269,7 @@ export class AntigravityBridge {
       turns: this.turnCount,
       inputTokens: this.totalInputTokens,
       outputTokens: this.totalOutputTokens,
+      ...(this.cacheReadMeasured ? { cacheReadTokens: this.totalCacheReadTokens } : {}),
       outputChars: this.totalOutputChars,
     }));
 

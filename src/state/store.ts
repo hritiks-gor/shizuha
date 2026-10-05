@@ -124,6 +124,7 @@ export class StateStore {
         updated_at INTEGER NOT NULL,
         total_input_tokens INTEGER DEFAULT 0,
         total_output_tokens INTEGER DEFAULT 0,
+        total_cache_read_tokens INTEGER DEFAULT 0,
         turn_count INTEGER DEFAULT 0
       );
       CREATE TABLE IF NOT EXISTS messages (
@@ -312,6 +313,9 @@ export class StateStore {
     if (!cols.some((c) => c.name === 'name')) {
       this.db.exec('ALTER TABLE sessions ADD COLUMN name TEXT');
     }
+    if (!cols.some((c) => c.name === 'total_cache_read_tokens')) {
+      this.db.exec('ALTER TABLE sessions ADD COLUMN total_cache_read_tokens INTEGER DEFAULT 0');
+    }
     const messageCols = this.db.pragma('table_info(messages)') as Array<{ name: string }>;
     if (!messageCols.some((c) => c.name === 'message_id')) {
       this.db.exec('ALTER TABLE messages ADD COLUMN message_id TEXT');
@@ -470,6 +474,7 @@ export class StateStore {
       messages: [],
       totalInputTokens: 0,
       totalOutputTokens: 0,
+      totalCacheReadTokens: 0,
       turnCount: 0,
     };
   }
@@ -484,6 +489,7 @@ export class StateStore {
       updated_at: number;
       total_input_tokens: number;
       total_output_tokens: number;
+      total_cache_read_tokens?: number | null;
       turn_count: number;
     } | undefined;
     if (!row) return null;
@@ -499,6 +505,7 @@ export class StateStore {
       messages,
       totalInputTokens: row.total_input_tokens,
       totalOutputTokens: row.total_output_tokens,
+      totalCacheReadTokens: row.total_cache_read_tokens ?? 0,
       turnCount: row.turn_count,
       ...(interruptCheckpoint ? { interruptCheckpoint } : {}),
     };
@@ -712,8 +719,22 @@ export class StateStore {
     }>;
   }
 
-  /** Update session token counts */
-  updateTokens(sessionId: string, inputTokens: number, outputTokens: number): void {
+  /**
+   * Update session token counts.
+   * `cacheReadTokens` omitted means this turn did not report a cache counter.
+   * `0` is a measured miss and is added.
+   * `total_input_tokens` stays the gross provider input, including cached tokens.
+   */
+  updateTokens(sessionId: string, inputTokens: number, outputTokens: number, cacheReadTokens?: number): void {
+    const measuredCache = typeof cacheReadTokens === 'number' && Number.isFinite(cacheReadTokens) && cacheReadTokens >= 0;
+    if (measuredCache) {
+      this.db
+        .prepare(
+          'UPDATE sessions SET total_input_tokens = total_input_tokens + ?, total_output_tokens = total_output_tokens + ?, total_cache_read_tokens = COALESCE(total_cache_read_tokens, 0) + ?, turn_count = turn_count + 1, updated_at = ? WHERE id = ?',
+        )
+        .run(inputTokens, outputTokens, cacheReadTokens, Date.now(), sessionId);
+      return;
+    }
     this.db
       .prepare(
         'UPDATE sessions SET total_input_tokens = total_input_tokens + ?, total_output_tokens = total_output_tokens + ?, turn_count = turn_count + 1, updated_at = ? WHERE id = ?',
@@ -1368,6 +1389,7 @@ export class StateStore {
     turnCount: number;
     totalInputTokens: number;
     totalOutputTokens: number;
+    totalCacheReadTokens: number;
     name?: string;
     firstMessage?: string;
   }> {
@@ -1375,7 +1397,7 @@ export class StateStore {
       ? this.db
           .prepare(
             `SELECT s.id, s.model, s.cwd, s.created_at, s.updated_at, s.turn_count,
-                    s.total_input_tokens, s.total_output_tokens, s.name,
+                    s.total_input_tokens, s.total_output_tokens, s.total_cache_read_tokens, s.name,
                     (SELECT substr(m.content, 1, 80) FROM messages m
                      WHERE m.session_id = s.id AND m.role = 'user'
                      ORDER BY m.id ASC LIMIT 1) AS first_message
@@ -1398,13 +1420,14 @@ export class StateStore {
         turn_count: number;
         total_input_tokens: number;
         total_output_tokens: number;
+        total_cache_read_tokens: number | null;
         name: string | null;
         first_message: string | null;
       }>
       : this.db
           .prepare(
             `SELECT s.id, s.model, s.cwd, s.created_at, s.updated_at, s.turn_count,
-                    s.total_input_tokens, s.total_output_tokens, s.name,
+                    s.total_input_tokens, s.total_output_tokens, s.total_cache_read_tokens, s.name,
                     (SELECT substr(m.content, 1, 80) FROM messages m
                      WHERE m.session_id = s.id AND m.role = 'user'
                      ORDER BY m.id ASC LIMIT 1) AS first_message
@@ -1419,6 +1442,7 @@ export class StateStore {
       turn_count: number;
       total_input_tokens: number;
       total_output_tokens: number;
+      total_cache_read_tokens: number | null;
       name: string | null;
       first_message: string | null;
     }>;
@@ -1443,6 +1467,7 @@ export class StateStore {
         turnCount: r.turn_count,
         totalInputTokens: r.total_input_tokens,
         totalOutputTokens: r.total_output_tokens,
+        totalCacheReadTokens: r.total_cache_read_tokens ?? 0,
         name: r.name ?? undefined,
         firstMessage,
       };
@@ -1472,10 +1497,11 @@ export class StateStore {
     forked.messages = [...original.messages];
     forked.totalInputTokens = original.totalInputTokens;
     forked.totalOutputTokens = original.totalOutputTokens;
+    forked.totalCacheReadTokens = original.totalCacheReadTokens ?? 0;
     forked.turnCount = original.turnCount;
     this.db.prepare(
-      'UPDATE sessions SET total_input_tokens = ?, total_output_tokens = ?, turn_count = ? WHERE id = ?',
-    ).run(original.totalInputTokens, original.totalOutputTokens, original.turnCount, forked.id);
+      'UPDATE sessions SET total_input_tokens = ?, total_output_tokens = ?, total_cache_read_tokens = ?, turn_count = ? WHERE id = ?',
+    ).run(original.totalInputTokens, original.totalOutputTokens, original.totalCacheReadTokens ?? 0, original.turnCount, forked.id);
     return forked;
   }
 

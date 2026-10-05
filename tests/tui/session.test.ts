@@ -904,7 +904,7 @@ describe('AgentSession', () => {
       }
     });
 
-    it('continues after progress-only narration without a tool call', async () => {
+    it('stops when the model ends on a progress sentence instead of continuing', async () => {
       const previousHome = process.env['HOME'];
       const tempHome = await fs.mkdtemp(path.join(os.tmpdir(), 'shizuha-session-progress-only-'));
       process.env['HOME'] = tempHome;
@@ -944,50 +944,14 @@ describe('AgentSession', () => {
         .mockImplementationOnce((async () => ({
           assistantMessage: {
             role: 'assistant',
-            content: [{ type: 'text', text: 'Good, the API is working. Let me search for tasks related to v4 and coding models.' }],
+            content: [{ type: 'text', text: "Tell me which app and I'll check whether the equivalent still exists." }],
             timestamp: Date.now(),
           },
           toolCalls: [],
           toolResults: [],
           inputTokens: 12,
-          outputTokens: 10,
-          stopReason: 'end_turn',
-        })) as typeof turnModule.executeTurn)
-        .mockImplementationOnce((async () => ({
-          assistantMessage: {
-            role: 'assistant',
-            content: [
-              { type: 'text', text: 'Searching Pulse now.' },
-              {
-                type: 'tool_use',
-                id: 'pulse-search',
-                name: 'bash',
-                input: { command: 'curl -s http://pulse/api/tasks/?q=v4' },
-              },
-            ],
-            timestamp: Date.now(),
-          },
-          toolCalls: [
-            { id: 'pulse-search', name: 'bash', input: { command: 'curl -s http://pulse/api/tasks/?q=v4' } },
-          ],
-          toolResults: [
-            { toolUseId: 'pulse-search', content: 'Found PLAT-999: Deploy best coding model on v4.', isError: false },
-          ],
-          inputTokens: 14,
-          outputTokens: 8,
-          stopReason: 'tool_use',
-        })) as typeof turnModule.executeTurn)
-        .mockImplementationOnce((async () => ({
-          assistantMessage: {
-            role: 'assistant',
-            content: [{ type: 'text', text: 'Found PLAT-999: Deploy best coding model on v4.' }],
-            timestamp: Date.now(),
-          },
-          toolCalls: [],
-          toolResults: [],
-          inputTokens: 16,
-          outputTokens: 7,
-          stopReason: 'end_turn',
+          outputTokens: 518,
+          stopReason: 'stop',
         })) as typeof turnModule.executeTurn);
 
       try {
@@ -999,7 +963,7 @@ describe('AgentSession', () => {
 
         await session.submitPrompt('find the v4 coding model task');
 
-        expect(executeTurnSpy).toHaveBeenCalledTimes(4);
+        expect(executeTurnSpy).toHaveBeenCalledTimes(2);
         const savedSessionId = session.currentSessionId;
         expect(savedSessionId).toBeTruthy();
 
@@ -1023,8 +987,12 @@ describe('AgentSession', () => {
           ),
         ).toBe(false);
 
-        const lastAssistant = [...resumedSession!.messages].reverse().find((m) => m.role === 'assistant');
-        expect(lastAssistant?.content).toEqual([{ type: 'text', text: 'Found PLAT-999: Deploy best coding model on v4.' }]);
+        const assistants = resumedSession!.messages.filter((m) => m.role === 'assistant');
+        expect(assistants).toHaveLength(2);
+        expect(assistants[1]?.content).toEqual([{
+          type: 'text',
+          text: "Tell me which app and I'll check whether the equivalent still exists.",
+        }]);
       } finally {
         ensureProviderSpy?.mockRestore();
         executeTurnSpy.mockRestore();
@@ -1036,6 +1004,56 @@ describe('AgentSession', () => {
         } else {
           process.env['HOME'] = previousHome;
         }
+        await fs.rm(tempHome, { recursive: true, force: true });
+      }
+    });
+
+    it('does not retry a 400 for two trailing assistant messages', async () => {
+      const previousHome = process.env['HOME'];
+      const tempHome = await fs.mkdtemp(path.join(os.tmpdir(), 'shizuha-session-assistant-pair-400-'));
+      process.env['HOME'] = tempHome;
+
+      let ensureProviderSpy:
+        | ReturnType<typeof vi.spyOn<{
+          ensureProvider: () => unknown;
+        }, 'ensureProvider'>>
+        | null = null;
+
+      const shapeError = Object.assign(
+        new Error('Cortex stream error: Cannot have 2 or more assistant messages at the end of the list. (code: 400)'),
+        { code: '400', status: 400, retryable: true },
+      );
+      let calls = 0;
+      const executeTurnSpy = vi.spyOn(turnModule, 'executeTurn')
+        .mockImplementation((async () => {
+          calls += 1;
+          if (calls > 1) {
+            throw Object.assign(new Error('retry happened'), { status: 401, retryable: false });
+          }
+          throw shapeError;
+        }) as typeof turnModule.executeTurn);
+
+      try {
+        await session.init(process.cwd(), 'test-local-model', 'autonomous');
+        ensureProviderSpy = vi.spyOn(
+          session as unknown as { ensureProvider: () => unknown },
+          'ensureProvider',
+        ).mockReturnValue({});
+        const events: AgentEvent[] = [];
+        session.on('agent_event', (event: AgentEvent) => events.push(event));
+
+        await session.submitPrompt('summarize the migration');
+
+        expect(calls).toBe(1);
+        expect(events.some((event) => event.type === 'provider_status'
+          && (event as { code?: string }).code === 'provider_retry_stall')).toBe(false);
+        expect(events.some((event) => event.type === 'error'
+          && event.error.includes('2 or more assistant messages'))).toBe(true);
+      } finally {
+        ensureProviderSpy?.mockRestore();
+        executeTurnSpy.mockRestore();
+        if (previousHome == null) delete process.env['HOME'];
+        else process.env['HOME'] = previousHome;
         await fs.rm(tempHome, { recursive: true, force: true });
       }
     });

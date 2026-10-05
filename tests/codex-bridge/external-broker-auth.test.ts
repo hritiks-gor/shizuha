@@ -155,6 +155,7 @@ describe('Hive-managed Codex external auth', () => {
       8000,
       {
         forceRefresh: true,
+        model: 'gpt-test',
         preferredEntryId: 'entry-current',
         stickyKey: 'agent:sora',
       },
@@ -206,6 +207,7 @@ describe('Hive-managed Codex external auth', () => {
         5000,
         {
           excludeEntryId: 'entry-exhausted',
+          model: 'gpt-test',
           stickyKey: 'agent:sora',
         },
       );
